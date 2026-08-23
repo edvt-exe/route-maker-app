@@ -3,6 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.router import api_router
 
+from app.core.database import engine
+from app.models.user import Base
+
+Base.metadata.create_all(bind=engine)
+
 def get_application() -> FastAPI:
     application = FastAPI(
         title=settings.PROJECT_NAME,
@@ -10,7 +15,6 @@ def get_application() -> FastAPI:
         openapi_url=f"{settings.API_V1_STR}/openapi.json"
     )
 
-    # CORS configure
     application.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:3000"],
@@ -19,7 +23,6 @@ def get_application() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # trying every route
     application.include_router(api_router, prefix=settings.API_V1_STR)
 
     return application
