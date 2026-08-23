@@ -2,10 +2,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.router import api_router
-
 from app.core.database import engine
-from app.models.user import Base
+from app.models.user import Base as UserBase
+from app.models.route import Base as RouteBase
 
+UserBase.metadata.create_all(bind=engine)
+RouteBase.metadata.create_all(bind=engine)
 Base.metadata.create_all(bind=engine)
 
 def get_application() -> FastAPI:
