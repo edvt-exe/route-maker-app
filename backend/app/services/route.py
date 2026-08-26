@@ -2,8 +2,11 @@ from sqlalchemy.orm import Session
 from typing import List
 from app.models.route import Route, Waypoint
 from app.schemas.route import RouteCreate
+from app.services.itinerary import flatten_itineraries, generate_itineraries
 
-def create_user_route(db: Session, route: RouteCreate, user_id: int) -> Route:
+def create_user_route(db: Session, route: RouteCreate, user_id: int):
+    itineraries = generate_itineraries(route)
+    generated_waypoints = flatten_itineraries(itineraries)
     db_route = Route(
         title=route.title,
         city=route.city,
@@ -14,7 +17,7 @@ def create_user_route(db: Session, route: RouteCreate, user_id: int) -> Route:
     db.refresh(db_route)
 
     waypoints_data = []
-    for wp in route.waypoints:
+    for wp in generated_waypoints:
         db_waypoint = Waypoint(
             route_id=db_route.id,
             name=wp.name,
@@ -29,7 +32,7 @@ def create_user_route(db: Session, route: RouteCreate, user_id: int) -> Route:
     db.commit()
     db.refresh(db_route)
     
-    return db_route
+    return db_route, itineraries
 
 def get_user_routes(db: Session, user_id: int) -> List[Route]:
     return db.query(Route).filter(Route.user_id == user_id).all()

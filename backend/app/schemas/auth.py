@@ -1,13 +1,25 @@
-from pydantic import BaseModel, EmailStr, Field, field_validator
-from typing import Optional
+from pydantic import BaseModel, Field, field_validator
 
-class UserBase(BaseModel):
+from app.schemas.user import UserResponse
+
+
+class LoginRequest(BaseModel):
+    identifier: str = Field(min_length=2)
+    password: str
+
+
+class RegisterRequest(BaseModel):
     name: str = Field(min_length=2, max_length=100)
     email: EmailStr
-    walking_speed_kmh: Optional[float] = 4.5
-
-class UserCreate(UserBase):
     password: str = Field(min_length=8)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 2:
+            raise ValueError("Name must contain at least 2 characters.")
+        return value
 
     @field_validator("password")
     @classmethod
@@ -25,9 +37,8 @@ class UserCreate(UserBase):
             raise ValueError(f"Password must contain {', '.join(missing)}.")
         return value
 
-class UserResponse(UserBase):
-    id: int
-    is_active: bool
 
-    class Config:
-        from_attributes = True
+class AuthResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse

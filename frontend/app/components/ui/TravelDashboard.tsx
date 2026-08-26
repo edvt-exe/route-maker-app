@@ -1,11 +1,15 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
+import RouteResults, { RouteData } from './RouteResults';
+import TriplyLogo from '../shared/TriplyLogo';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  MapPin, Clock, Navigation, Compass, Utensils, 
+  MapPin, Clock, Compass, Utensils, 
   Landmark, Footprints, Camera, Coffee, Route, 
-  Map as MapIcon, Zap, ChevronRight, Loader2
+  Map as MapIcon, Zap, ChevronRight, Loader2, UserRound, Settings, LogOut, CheckCircle2, Sparkles, ArrowDown,
+  TrainFront, Car, WalletCards, SunMedium, Heart, ArrowUpRight
 } from 'lucide-react';
 
 const AnimatedMapBackground = () => {
@@ -64,133 +68,316 @@ const AnimatedMapBackground = () => {
 const PREFERENCES = [
   { id: 'landmarks', icon: Landmark, title: 'Historical Landmarks', category: 'Attractions' },
   { id: 'culture', icon: Camera, title: 'Arts & Culture', category: 'Attractions' },
+  { id: 'parks', icon: Landmark, title: 'Parks & Gardens', category: 'Outdoors' },
+  { id: 'viewpoints', icon: MapIcon, title: 'Viewpoints', category: 'Outdoors' },
   { id: 'fine-dining', icon: Utensils, title: 'Fine Dining', category: 'Dining' },
   { id: 'cafes', icon: Coffee, title: 'Local Cafes', category: 'Dining' },
   { id: 'fast-pace', icon: Zap, title: 'Action Packed', category: 'Pacing' },
   { id: 'slow-pace', icon: Footprints, title: 'Leisurely Stroll', category: 'Pacing' },
 ];
 
+const TRIP_TYPES = ['Weekend escape', 'Day trip', 'Slow holiday', 'City break'];
+const BUDGETS = ['Under $50', '$50 - $150', '$150+'];
+const TRANSPORT = [
+  { id: 'walk', label: 'Mostly walking', icon: Footprints },
+  { id: 'transit', label: 'Public transport', icon: TrainFront },
+  { id: 'car', label: 'By car', icon: Car },
+];
+
+const QUICK_TRIPS = [
+  { city: 'Lisbon', note: 'Hills, tiles & small plates', color: 'from-orange-200 to-rose-300' },
+  { city: 'Copenhagen', note: 'Bikes, bakeries & design', color: 'from-sky-200 to-teal-300' },
+  { city: 'Kyoto', note: 'Quiet lanes & old gardens', color: 'from-amber-100 to-red-200' },
+];
+
+type DailyPlan = { start: string; final: string };
+type GeocodedPlace = { display_name: string; lat: string; lon: string };
+type CityPoi = { name: string; city: string; category: string; latitude: number; longitude: number; cost: number; duration_minutes: number; rating: number; tags: string[]; is_premium: boolean; required: boolean };
+
 export default function TravelDashboard() {
+  const [user, setUser] = useState<{ name: string; email: string } | null>(null);
+  const [isAccountOpen, setIsAccountOpen] = useState(false);
+  const [isLogoutPromptOpen, setIsLogoutPromptOpen] = useState(false);
+  const [isSignedOut, setIsSignedOut] = useState(false);
   const [activePrefs, setActivePrefs] = useState<string[]>([]);
-  const [startLocation, setStartLocation] = useState("");
-  const [destination, setDestination] = useState("");
-  const [days, setDays] = useState<number>(3);
-  const [hours, setHours] = useState<number>(8);
+  const [cities, setCities] = useState("Bucharest");
+  const [days, setDays] = useState<number>(1);
+  const [dailyPlans, setDailyPlans] = useState<DailyPlan[]>([
+    { start: "", final: "" },
+  ]);
+  const [sameAccommodation, setSameAccommodation] = useState(true);
+  const [startTime, setStartTime] = useState("09:00");
+  const [endTime, setEndTime] = useState("17:00");
+  const [mealsPerDay, setMealsPerDay] = useState<number>(1);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [tripType, setTripType] = useState(TRIP_TYPES[0]);
+  const [budget, setBudget] = useState(BUDGETS[1]);
+  const [transport, setTransport] = useState('walk');
+  const [saved, setSaved] = useState(false);
+  const [generatedRoute, setGeneratedRoute] = useState<RouteData | null>(null);
+
+  useEffect(() => {
+    const storedUser = localStorage.getItem('triply_user');
+    if (storedUser) {
+      try {
+        setUser(JSON.parse(storedUser));
+      } catch {
+        localStorage.removeItem('triply_user');
+      }
+    }
+  }, []);
+
+  const handleSignOut = () => {
+    setIsLogoutPromptOpen(true);
+    setIsAccountOpen(false);
+  };
+
+  const handleChangeAccount = () => {
+    localStorage.removeItem('triply_token');
+    localStorage.removeItem('triply_user');
+    window.location.assign('/auth');
+  };
+
+  const confirmSignOut = () => {
+    localStorage.removeItem('triply_token');
+    localStorage.removeItem('triply_user');
+    setUser(null);
+    setIsLogoutPromptOpen(false);
+    setIsSignedOut(true);
+    window.setTimeout(() => setIsSignedOut(false), 1000);
+  };
   
   const togglePref = (id: string) => {
     setActivePrefs(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
   };
 
+  const clearPreferences = () => setActivePrefs([]);
+  const selectAllPreferences = () => setActivePrefs(PREFERENCES.map((preference) => preference.id));
+
+  const scrollToPlanner = () => document.getElementById("planner")?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  const surprisePlan = () => {
+    setCities("Bucharest");
+    setTripType("City break");
+    setTransport("walk");
+    setActivePrefs(["landmarks", "culture", "parks"]);
+    scrollToPlanner();
+  };
+
+  const updateDays = (value: number) => {
+    const nextDays = Math.max(1, Math.min(14, value || 1));
+    setDays(nextDays);
+    setDailyPlans((currentPlans) => Array.from({ length: nextDays }, (_, index) => currentPlans[index] ?? { start: "", final: "" }));
+  };
+
+  const updateDailyPlan = (dayIndex: number, field: keyof DailyPlan, value: string) => {
+    setDailyPlans((currentPlans) => currentPlans.map((plan, index) => index === dayIndex || (sameAccommodation && field === "final" && index > 0) ? { ...plan, [field]: value } : plan));
+  };
+
+  const toggleSameAccommodation = (enabled: boolean) => {
+    setSameAccommodation(enabled);
+    if (enabled) setDailyPlans((currentPlans) => currentPlans.map((plan, index) => index === 0 ? plan : { ...plan, final: currentPlans[0].final }));
+  };
+
+  const geocode = async (place: string, cityContext = ""): Promise<GeocodedPlace> => {
+    const query = cityContext ? `${place}, ${cityContext}` : place;
+    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`, { headers: { "Accept-Language": "en" } });
+    if (!response.ok) throw new Error(`Could not search for ${place}.`);
+    const results = await response.json() as GeocodedPlace[];
+    if (!results[0]) throw new Error(`Could not find ${place}. Check the spelling or add more address detail.`);
+    return results[0];
+  };
+
+  const discoverCityPois = async (city: string, place: GeocodedPlace): Promise<CityPoi[]> => {
+    const query = `[out:json][timeout:20];(nwr(around:5000,${place.lat},${place.lon})["tourism"~"museum|gallery|attraction|viewpoint|zoo|theme_park"];nwr(around:5000,${place.lat},${place.lon})["historic"];nwr(around:5000,${place.lat},${place.lon})["amenity"~"cafe|restaurant"];nwr(around:5000,${place.lat},${place.lon})["leisure"="park"];);out center tags;`;
+    const endpoints = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
+    let data: { elements?: Array<{ id: number; lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }> } | null = null;
+    for (const endpoint of endpoints) {
+      try {
+        const response = await fetch(`${endpoint}?data=${encodeURIComponent(query)}`);
+        if (response.ok) {
+          data = await response.json();
+          break;
+        }
+      } catch {
+        // Try the next public Overpass instance.
+      }
+    }
+    const overpassPois = (data?.elements ?? []).flatMap((element) => {
+      const tags = element.tags ?? {};
+      const latitude = element.lat ?? element.center?.lat;
+      const longitude = element.lon ?? element.center?.lon;
+      if (!tags.name || latitude === undefined || longitude === undefined) return [];
+      const rawCategory = tags.amenity === "cafe" ? "Local Cafes" : tags.amenity === "restaurant" ? "Fine Dining" : tags.tourism === "museum" || tags.tourism === "gallery" ? "Arts & Culture" : tags.tourism === "viewpoint" ? "Viewpoints" : tags.leisure === "park" ? "Parks & Gardens" : "Historical Landmarks";
+      const cost = rawCategory === "Fine Dining" ? 80 : rawCategory === "Local Cafes" ? 15 : rawCategory === "Arts & Culture" ? 20 : 0;
+      return [{ name: tags.name, city, category: rawCategory, latitude, longitude, cost, duration_minutes: rawCategory === "Historical Landmarks" ? 45 : 60, rating: 0, tags: Object.values(tags), is_premium: false, required: true }];
+    });
+    if (overpassPois.length >= 10) return overpassPois.slice(0, 10);
+
+    const fallbackQueries = ["landmark", "museum", "cafe", "park"];
+    const fallbackPois: CityPoi[] = [];
+    for (const category of fallbackQueries) {
+      try {
+        const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=${encodeURIComponent(`${category}, ${city}`)}`, { headers: { "Accept-Language": "en" } });
+        if (!response.ok) continue;
+        const results = await response.json() as Array<GeocodedPlace & { type?: string; name?: string }>;
+        for (const result of results) {
+          const name = result.name || result.display_name.split(",")[0];
+          if (!name) continue;
+          const rawCategory = category === "cafe" ? "Local Cafes" : category === "museum" ? "Arts & Culture" : category === "park" ? "Parks & Gardens" : "Historical Landmarks";
+          fallbackPois.push({ name, city, category: rawCategory, latitude: Number(result.lat), longitude: Number(result.lon), cost: category === "cafe" ? 15 : category === "museum" ? 20 : 0, duration_minutes: 45, rating: 0, tags: [category], is_premium: false, required: true });
+        }
+      } catch {
+        // Keep any places found by earlier providers.
+      }
+    }
+    const combined = [...overpassPois, ...fallbackPois];
+    return combined.filter((poi, index, all) => all.findIndex((candidate) => candidate.name.toLowerCase() === poi.name.toLowerCase()) === index).slice(0, 10);
+  };
+
   const handleGenerateRoute = async () => {
-    if (!startLocation || !destination) {
-      alert("Please enter both starting location and destination.");
+    const cityList = cities.split(",").map((city) => city.trim()).filter(Boolean);
+    const startMinutes = Number(startTime.split(":")[0]) * 60 + Number(startTime.split(":")[1]);
+    const endMinutes = Number(endTime.split(":")[0]) * 60 + Number(endTime.split(":")[1]);
+    if (cityList.length === 0 || dailyPlans.some((plan) => !plan.start.trim() || !plan.final.trim()) || endMinutes <= startMinutes) {
+      alert("Add the cities, valid daily start and final locations, and an end time after the start time.");
       return;
     }
 
     setIsGenerating(true);
 
-    const payload = {
-      title: `${startLocation} to ${destination} Exploration`,
-      city: destination, 
-      waypoints: [
-        {
-          name: startLocation,
-          category: "Start",
-          latitude: 44.4268,
-          longitude: 26.1025,
-          order_index: 0
-        },
-        {
-          name: destination,
-          category: "Destination",
-          latitude: 44.4379,
-          longitude: 26.0955,
-          order_index: 1
-        }
-      ]
-    };
-
     try {
+      const waypoints: Array<{ name: string; category: string; latitude: number; longitude: number; order_index: number }> = [];
+      const generatedDailyPlans = [];
+      const pointsOfInterest: CityPoi[] = [];
+      let orderIndex = 0;
+      for (const city of cityList) {
+        const location = await geocode(city);
+        try {
+          pointsOfInterest.push(...await discoverCityPois(city, location));
+        } catch {
+          // The route can still be built from its required daily anchors.
+        }
+      }
+      for (const [dayIndex, plan] of dailyPlans.entries()) {
+        const start = await geocode(plan.start);
+        const final = await geocode(plan.final);
+        generatedDailyPlans.push({ day: dayIndex + 1, start: { name: plan.start, latitude: Number(start.lat), longitude: Number(start.lon) }, final_destination: { name: plan.final, latitude: Number(final.lat), longitude: Number(final.lon) } });
+        waypoints.push({ name: plan.start, category: `Day ${dayIndex + 1} · Start`, latitude: Number(start.lat), longitude: Number(start.lon), order_index: orderIndex++ });
+        waypoints.push({ name: plan.final, category: `Day ${dayIndex + 1} · Final destination`, latitude: Number(final.lat), longitude: Number(final.lon), order_index: orderIndex++ });
+      }
+      const payload = {
+        title: `${cityList.join(", ")} · ${days}-day route`,
+        city: cityList.join(", "),
+        waypoints,
+        cities: cityList,
+        daily_plans: generatedDailyPlans,
+        points_of_interest: pointsOfInterest,
+        preferences: {
+          trip_type: tripType,
+          pacing_tags: activePrefs.map((preference) => preference === "fast-pace" ? "Action Packed" : preference === "slow-pace" ? "Leisurely Stroll" : preference),
+          transport: transport === "walk" ? "walking" : transport === "transit" ? "public transport" : "by car",
+          budget,
+          categories: activePrefs.map((preference) => preference === "landmarks" ? "Historical Landmarks" : preference === "culture" ? "Arts & Culture" : preference === "parks" ? "Parks & Gardens" : preference === "viewpoints" ? "Viewpoints" : preference === "cafes" ? "Local Cafes" : preference === "fine-dining" ? "Fine Dining" : preference),
+          hours_per_day: Math.max(1, (Number(endTime.split(":")[0]) * 60 + Number(endTime.split(":")[1]) - (Number(startTime.split(":")[0]) * 60 + Number(startTime.split(":")[1]))) / 60),
+          start_time: startTime,
+          end_time: endTime,
+          meals_per_day: mealsPerDay,
+          start_buffer_minutes: 60,
+          end_buffer_minutes: 60,
+        },
+      };
+      const token = localStorage.getItem("triply_token");
       const response = await fetch("http://localhost:8000/api/v1/routes/", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer YOUR_JWT_TOKEN_HERE` 
+          "Authorization": `Bearer ${token ?? ""}`
         },
         body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
-        throw new Error(`API Error: ${response.status}`);
+        const details = await response.json().catch(() => null);
+        throw new Error(details?.detail ?? `API Error: ${response.status}`);
       }
 
       const data = await response.json();
-      console.log("Triply route generated successfully:", data);
-      alert("Your Triply route is ready.");
+      setGeneratedRoute(data);
       
     } catch (error) {
       console.error("Failed to compute route matrix:", error);
-      alert("We couldn't reach the route service. Check that the backend is running.");
+      alert(error instanceof Error ? error.message : "We couldn't create this route.");
     } finally {
       setIsGenerating(false);
     }
   };
 
+  if (generatedRoute) {
+    return <RouteResults route={generatedRoute} onBack={() => setGeneratedRoute(null)} />;
+  }
+
   return (
-    <div className="min-h-screen bg-transparent text-slate-200 font-sans relative overflow-x-hidden pb-20">
+    <div className="min-h-screen bg-transparent text-slate-200 font-sans relative overflow-x-hidden pb-20">{isLogoutPromptOpen && <div className="fixed inset-0 z-40 grid place-items-center bg-slate-950/80 px-6 backdrop-blur-md"><motion.div role="dialog" aria-modal="true" aria-labelledby="logout-title" initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} transition={{ duration: 0.25 }} className="w-full max-w-md rounded-3xl border border-white/15 bg-slate-950 p-7 text-center shadow-2xl"><motion.div initial={{ rotate: -8, scale: 0.8 }} animate={{ rotate: 0, scale: 1 }} transition={{ type: "spring" }}><LogOut className="mx-auto text-amber-300" size={34} /></motion.div><h2 id="logout-title" className="mt-5 text-2xl font-semibold text-white">Are you sure you want to sign out?</h2><p className="mt-3 text-sm leading-6 text-slate-400">Your current session will be cleared from this device.</p><div className="mt-7 flex justify-center gap-3"><button type="button" onClick={() => setIsLogoutPromptOpen(false)} className="rounded-full border border-white/15 px-5 py-3 text-sm text-slate-300 transition-colors hover:border-white/35 hover:text-white">Stay signed in</button><button type="button" onClick={confirmSignOut} className="rounded-full bg-rose-400 px-5 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-rose-300">Sign out</button></div></motion.div></div>}{isSignedOut && <div className="fixed inset-0 z-30 grid place-items-center bg-slate-950/85 px-6 backdrop-blur-md"><motion.div initial={{ opacity: 0, scale: 0.85, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }} className="text-center"><CheckCircle2 className="mx-auto text-cyan-300" size={64} strokeWidth={1.5} /><p className="mt-6 text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Session ended</p><h2 className="mt-3 text-3xl font-semibold text-white">You're signed out.</h2></motion.div></div>}
       <AnimatedMapBackground />
 
       <main className="relative z-10 max-w-6xl mx-auto px-6 pt-12">
-        <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="mb-12 flex flex-col items-center text-center">
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-cyan-950/50 border border-cyan-500/30 text-cyan-400 text-sm font-medium mb-6 shadow-[0_0_15px_rgba(34,211,238,0.2)]">
-            <Compass size={16} className="animate-spin-slow" />
-            <span>Triply travel planner</span>
+        <header className="sticky top-4 z-30 mb-12 flex items-center justify-between rounded-full border border-white/10 bg-slate-950/65 px-4 py-3 shadow-[0_12px_40px_rgba(0,0,0,0.25)] backdrop-blur-xl sm:px-5">
+          <TriplyLogo />
+          <nav className="flex items-center gap-3 text-sm text-slate-400 sm:gap-6">
+            <a href="#planner" className="hidden transition-colors hover:text-white sm:block">Plan a trip</a>
+            <a href="#inspiration" className="hidden transition-colors hover:text-white sm:block">Inspiration</a>
+            {user ? <div className="relative"><button type="button" onClick={() => setIsAccountOpen(!isAccountOpen)} className="flex items-center gap-2 rounded-full border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-white transition-colors hover:border-cyan-300 hover:text-cyan-200 sm:px-4"><UserRound size={16} /><span className="max-w-32 truncate">{user.name}</span></button>{isAccountOpen && <div className="absolute right-0 top-14 z-20 w-72 rounded-3xl border border-white/15 bg-slate-950/95 p-5 text-left shadow-2xl backdrop-blur-xl"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-300">Your account</p><div className="mt-4 flex items-center gap-3"><span className="grid size-10 place-items-center rounded-full bg-cyan-300/15 text-cyan-200"><UserRound size={18} /></span><div className="min-w-0"><p className="truncate text-sm font-semibold text-white">{user.name}</p><p className="truncate text-xs text-slate-400">{user.email}</p></div></div><div className="my-5 border-t border-white/10" /><Link href="/settings" onClick={() => setIsAccountOpen(false)} className="flex items-center gap-2 text-sm text-slate-300 transition-colors hover:text-white"><Settings size={15} className="text-cyan-300" /> Account settings</Link><div className="mt-4 grid gap-2"><button type="button" onClick={handleChangeAccount} className="flex items-center gap-2 rounded-2xl border border-cyan-300/30 px-3 py-2.5 text-xs text-cyan-200 transition-colors hover:border-cyan-200 hover:bg-cyan-300/10"><UserRound size={14} /> Change account</button><button type="button" onClick={handleSignOut} className="flex items-center gap-2 rounded-2xl border border-white/10 px-3 py-2.5 text-xs text-slate-300 transition-colors hover:border-rose-300/50 hover:text-rose-200"><LogOut size={14} /> Sign out</button></div></div>}</div> : <Link href="/auth" className="flex items-center gap-2 rounded-full border border-white/15 px-3 py-2 text-white transition-colors hover:border-cyan-300 hover:text-cyan-200 sm:px-4"><UserRound size={16} /> <span className="hidden sm:inline">Log in</span></Link>}
+          </nav>
+        </header>
+        <motion.div initial="hidden" animate="visible" className="relative isolate mb-10 grid min-h-[19rem] items-center gap-8 overflow-hidden py-4 lg:grid-cols-[1.05fr_0.95fr] lg:gap-8">
+          <div className="relative z-10 max-w-2xl">
+            <motion.div variants={{ hidden: { opacity: 0, y: 14 }, visible: { opacity: 1, y: 0, transition: { duration: 0.55 } } }} className="mb-7 inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-950/50 px-4 py-2 text-sm font-medium text-cyan-300 shadow-[0_0_15px_rgba(34,211,238,0.2)]">
+              <Compass size={16} className="animate-spin-slow" />
+              <span>Triply travel planner</span>
+            </motion.div>
+            <motion.p variants={{ hidden: { opacity: 0, x: -12 }, visible: { opacity: 1, x: 0, transition: { delay: 0.12, duration: 0.55 } } }} className="mb-4 text-xs font-semibold uppercase tracking-[0.24em] text-amber-300">Plan less. Notice more.</motion.p>
+            <motion.h1 variants={{ hidden: { opacity: 0, y: 24 }, visible: { opacity: 1, y: 0, transition: { delay: 0.18, duration: 0.7 } } }} className="max-w-2xl text-5xl font-bold leading-[0.95] tracking-tight text-white drop-shadow-lg md:text-7xl">
+              Make time for the good parts.
+            </motion.h1>
+            <motion.p variants={{ hidden: { opacity: 0, y: 18 }, visible: { opacity: 1, y: 0, transition: { delay: 0.3, duration: 0.65 } } }} className="mt-6 max-w-xl text-lg leading-8 text-slate-300">
+              Build a day around the places that make a city feel alive, from the first coffee to the last beautiful turn home.
+            </motion.p>
+            <motion.div variants={{ hidden: { opacity: 0, y: 12 }, visible: { opacity: 1, y: 0, transition: { delay: 0.44, duration: 0.55 } } }} className="mt-6 flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-wider text-slate-400"><span className="rounded-full border border-white/10 bg-white/5 px-4 py-2">Real places</span><span className="rounded-full border border-white/10 bg-white/5 px-4 py-2">Your pace</span><span className="rounded-full border border-white/10 bg-white/5 px-4 py-2">One good day</span></motion.div>
+            <motion.div variants={{ hidden: { opacity: 0, y: 12 }, visible: { opacity: 1, y: 0, transition: { delay: 0.56, duration: 0.55 } } }} className="mt-6 flex flex-wrap items-center gap-3"><button type="button" onClick={scrollToPlanner} className="inline-flex items-center gap-2 rounded-full bg-cyan-300 px-5 py-3 text-sm font-semibold text-slate-950 transition-transform hover:-translate-y-0.5 hover:bg-cyan-200">Start planning <ArrowDown size={16} /></button><button type="button" onClick={surprisePlan} className="inline-flex items-center gap-2 rounded-full border border-white/15 px-5 py-3 text-sm font-semibold text-white transition-colors hover:border-amber-300/60 hover:text-amber-200"><Sparkles size={16} /> Surprise me</button></motion.div>
           </div>
-          <h1 className="text-5xl md:text-7xl font-bold tracking-tighter mb-4 text-white drop-shadow-lg">
-            Make time for the good parts.
-          </h1>
-          <p className="text-slate-400 max-w-2xl text-lg">
-            Tell us where you are starting, where you want to go, and what makes a day feel like yours.
-          </p>
+          <motion.div aria-hidden="true" className="relative mx-auto h-72 w-full max-w-md lg:h-96" variants={{ hidden: { opacity: 0, scale: 0.88 }, visible: { opacity: 1, scale: 1, transition: { delay: 0.25, duration: 0.8 } } }}>
+            <div className="absolute left-1/2 top-1/2 size-48 -translate-x-1/2 -translate-y-1/2 rounded-full border border-cyan-300/20 bg-cyan-400/5 shadow-[0_0_90px_rgba(34,211,238,0.12)] lg:size-64" />
+            <motion.div className="absolute left-1/2 top-1/2 size-64 -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-amber-300/25 lg:size-80" animate={{ rotate: 360 }} transition={{ duration: 28, repeat: Infinity, ease: "linear" }} />
+            <motion.div className="absolute left-1/2 top-1/2 h-32 w-64 -translate-x-1/2 -translate-y-1/2 rounded-[50%] border-2 border-cyan-300/70" animate={{ rotate: [0, 8, 0, -8, 0], scale: [1, 1.04, 1] }} transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }} />
+            <motion.div className="absolute left-[18%] top-[32%] size-3 rounded-full bg-emerald-300 shadow-[0_0_18px_#6ee7b7]" animate={{ scale: [1, 1.4, 1] }} transition={{ duration: 2.4, repeat: Infinity }} />
+            <motion.div className="absolute right-[16%] top-[22%] size-3 rounded-full bg-amber-300 shadow-[0_0_18px_#fcd34d]" animate={{ scale: [1, 1.35, 1] }} transition={{ duration: 2.4, delay: 0.6, repeat: Infinity }} />
+            <motion.div className="absolute bottom-[21%] right-[24%] size-3 rounded-full bg-cyan-300 shadow-[0_0_18px_#67e8f9]" animate={{ scale: [1, 1.4, 1] }} transition={{ duration: 2.4, delay: 1.2, repeat: Infinity }} />
+            <span className="absolute left-[8%] top-[25%] rounded-full border border-emerald-300/20 bg-slate-950/80 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-200">Start</span>
+            <span className="absolute right-[2%] top-[14%] rounded-full border border-amber-300/20 bg-slate-950/80 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-200">Explore</span>
+            <span className="absolute bottom-[12%] right-[10%] rounded-full border border-cyan-300/20 bg-slate-950/80 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-cyan-200">Return</span>
+            <motion.div className="absolute left-[19%] top-[33%] size-8 rounded-full border border-emerald-200/30" animate={{ scale: [1, 2.4], opacity: [0.7, 0] }} transition={{ duration: 2.4, repeat: Infinity }} />
+          </motion.div>
         </motion.div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <div id="planner" className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           <motion.div initial={{ opacity: 0, x: -30 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }} className="lg:col-span-5 space-y-6">
-            <div className="bg-slate-900/60 backdrop-blur-xl border border-white/10 p-8 rounded-3xl shadow-2xl relative overflow-hidden group">
+            <div className="bg-slate-900/60 backdrop-blur-xl border border-white/10 p-6 rounded-3xl shadow-2xl relative overflow-hidden group">
               <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-              <h2 className="text-xl font-semibold mb-6 flex items-center gap-3 text-white">
-                <Route className="text-cyan-400" /> Waypoints
+              <h2 className="text-lg font-semibold mb-5 flex items-center gap-3 text-white">
+                <Route className="text-cyan-400" /> Build your route
               </h2>
               
-              <div className="space-y-5 relative">
-                <div className="absolute left-[1.1rem] top-10 bottom-10 w-0.5 bg-gradient-to-b from-cyan-500/50 to-amber-500/50 dashed" />
+              <div className="space-y-4 relative">
                 
-                <div className="relative group/input">
-                  <div className="absolute left-3 top-1/2 -translate-y-1/2 bg-slate-900 p-1 rounded-full z-10">
-                    <Navigation size={18} className="text-cyan-400" />
-                  </div>
-                  <input 
-                    type="text" 
-                    value={startLocation}
-                    onChange={(e) => setStartLocation(e.target.value)}
-                    placeholder="Where are you starting?" 
-                    className="w-full bg-black/40 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-all shadow-inner" 
-                  />
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">City or cities to visit
+                  <input type="text" value={cities} onChange={(event) => setCities(event.target.value)} placeholder="Bucharest, Brasov" className="mt-2 w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-4 text-white placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400" />
+                  <span className="mt-2 block text-xs font-normal normal-case tracking-normal text-slate-500">Separate multiple cities with commas.</span>
+                </label>
+                <div className="space-y-3">
+                  {dailyPlans.map((plan, dayIndex) => <div key={dayIndex} className="rounded-2xl border border-white/10 bg-black/20 p-3"><div className="mb-2 flex items-center justify-between"><p className="text-xs font-semibold uppercase tracking-wider text-cyan-300">Day {dayIndex + 1}</p>{sameAccommodation && dayIndex > 0 && <span className="text-[10px] uppercase tracking-wider text-slate-500">Same return</span>}</div><div className="grid gap-3 sm:grid-cols-2"><label className="block text-xs text-slate-400">Start from<input type="text" value={plan.start} onChange={(event) => updateDailyPlan(dayIndex, "start", event.target.value)} placeholder="Strada Cuza Voda 30" className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none" /></label><label className="block text-xs text-slate-400">Final destination<input type="text" value={plan.final} onChange={(event) => updateDailyPlan(dayIndex, "final", event.target.value)} placeholder="Accommodation or final stop" className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-amber-400 focus:outline-none" /></label></div></div>)}
                 </div>
-                
-                <div className="relative group/input">
-                  <div className="absolute left-3 top-1/2 -translate-y-1/2 bg-slate-900 p-1 rounded-full z-10">
-                    <MapPin size={18} className="text-amber-400" />
-                  </div>
-                  <input 
-                    type="text" 
-                    value={destination}
-                    onChange={(e) => setDestination(e.target.value)}
-                    placeholder="Where are you going?" 
-                    className="w-full bg-black/40 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 transition-all shadow-inner" 
-                  />
-                </div>
+                <label className="flex items-center gap-3 text-xs text-slate-300"><input type="checkbox" checked={sameAccommodation} onChange={(event) => toggleSameAccommodation(event.target.checked)} className="size-4 accent-cyan-400" /> Return to the same accommodation every day</label>
               </div>
             </div>
 
@@ -198,44 +385,46 @@ export default function TravelDashboard() {
               <h2 className="text-xl font-semibold mb-6 flex items-center gap-3 text-white">
                 <Clock className="text-cyan-400" /> Temporal Constraints
               </h2>
-              <div className="flex gap-4">
-                <div className="flex-1 relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 text-sm font-medium uppercase tracking-wider">Days</span>
-                  <input 
-                    type="number" 
-                    min="1" 
-                    value={days}
-                    onChange={(e) => setDays(Number(e.target.value))}
-                    className="w-full bg-black/40 border border-white/10 rounded-2xl py-4 pl-16 pr-4 text-white text-right focus:outline-none focus:border-cyan-400 transition-all font-mono text-lg" 
-                  />
-                </div>
-                <div className="flex-1 relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 text-sm font-medium uppercase tracking-wider">Hrs</span>
-                  <input 
-                    type="number" 
-                    min="1" 
-                    max="24" 
-                    value={hours}
-                    onChange={(e) => setHours(Number(e.target.value))}
-                    className="w-full bg-black/40 border border-white/10 rounded-2xl py-4 pl-16 pr-4 text-white text-right focus:outline-none focus:border-cyan-400 transition-all font-mono text-lg" 
-                  />
-                </div>
+              <div className="grid grid-cols-3 gap-3">
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Days<input type="number" min="1" max="14" value={days} onChange={(event) => updateDays(Number(event.target.value))} className="mt-2 w-full rounded-2xl border border-white/10 bg-black/40 px-3 py-4 text-center text-lg text-white focus:border-cyan-400 focus:outline-none" /></label>
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Start<input type="time" value={startTime} onChange={(event) => setStartTime(event.target.value)} className="mt-2 w-full rounded-2xl border border-white/10 bg-black/40 px-3 py-4 text-center text-lg text-white focus:border-cyan-400 focus:outline-none" /></label>
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">End<input type="time" value={endTime} onChange={(event) => setEndTime(event.target.value)} className="mt-2 w-full rounded-2xl border border-white/10 bg-black/40 px-3 py-4 text-center text-lg text-white focus:border-cyan-400 focus:outline-none" /></label>
               </div>
+              <div className="mt-5 border-t border-white/10 pt-5">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">Meals per day</label>
+                <div className="mt-2 flex items-center gap-3"><button type="button" aria-label="Fewer meals" onClick={() => setMealsPerDay((value) => Math.max(0, value - 1))} className="grid size-10 place-items-center rounded-full border border-white/15 text-lg text-white hover:border-cyan-300">-</button><span className="min-w-10 text-center text-lg font-semibold text-white">{mealsPerDay}</span><button type="button" aria-label="More meals" onClick={() => setMealsPerDay((value) => Math.min(4, value + 1))} className="grid size-10 place-items-center rounded-full border border-white/15 text-lg text-white hover:border-cyan-300">+</button><span className="text-xs text-slate-500">One hour is reserved before and after each day.</span></div>
+              </div>
+            </div>
+
+            <div className="relative overflow-hidden rounded-3xl border border-cyan-300/15 bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.13),transparent_48%),rgba(15,23,42,0.72)] p-6 shadow-2xl backdrop-blur-xl">
+              <div className="pointer-events-none absolute -right-16 -top-16 size-40 rounded-full border border-amber-300/15" />
+              <h2 className="relative mb-2 flex items-center gap-3 text-lg font-semibold text-white"><WalletCards className="text-amber-300" /> Shape the day</h2>
+              <p className="mb-5 text-sm text-slate-400">Tune the rhythm, movement, and spend before Triply builds your route.</p>
+              <div className="mb-5 flex flex-wrap gap-2 text-[10px] font-semibold uppercase tracking-wider"><span className="rounded-full bg-cyan-300/10 px-3 py-1.5 text-cyan-200">{tripType}</span><span className="rounded-full bg-amber-300/10 px-3 py-1.5 text-amber-200">{transport === 'walk' ? 'Walking' : transport === 'transit' ? 'Transit' : 'Car'}</span><span className="rounded-full bg-white/5 px-3 py-1.5 text-slate-300">{budget}</span></div>
+              <label className="mb-3 block text-xs font-semibold uppercase tracking-wider text-slate-500">What kind of trip?</label>
+              <div className="grid grid-cols-2 gap-2">
+                {TRIP_TYPES.map((type) => <button type="button" key={type} onClick={() => setTripType(type)} className={`rounded-full border px-3 py-2.5 text-left text-xs transition-all ${tripType === type ? 'border-amber-300 bg-amber-300/15 text-amber-200 shadow-[0_0_18px_rgba(251,191,36,0.12)]' : 'border-white/10 text-slate-400 hover:border-white/30 hover:text-white'}`}>{type}</button>)}
+              </div>
+              <label className="mb-3 mt-5 block text-xs font-semibold uppercase tracking-wider text-slate-500">Getting around</label>
+              <div className="grid grid-cols-3 gap-2">
+                {TRANSPORT.map(({ id, label, icon: Icon }) => <button type="button" key={id} title={label} onClick={() => setTransport(id)} className={`grid place-items-center gap-1.5 rounded-2xl border p-2.5 text-[11px] transition-all ${transport === id ? 'border-cyan-300 bg-cyan-300/10 text-cyan-200 shadow-[0_0_18px_rgba(34,211,238,0.12)]' : 'border-white/10 text-slate-500 hover:border-white/30 hover:text-white'}`}><Icon size={17} />{label.replace('Mostly ', '')}</button>)}
+              </div>
+              <label className="mb-3 mt-5 block text-xs font-semibold uppercase tracking-wider text-slate-500">Comfort budget</label>
+              <div className="flex gap-2">{BUDGETS.map((item) => <button type="button" key={item} onClick={() => setBudget(item)} className={`flex-1 rounded-full border px-2 py-2.5 text-xs transition-all ${budget === item ? 'border-amber-300 bg-amber-300/10 text-amber-200' : 'border-white/10 text-slate-500 hover:border-white/30 hover:text-white'}`}>{item}</button>)}</div>
             </div>
           </motion.div>
 
           <motion.div initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.4 }} className="lg:col-span-7 space-y-6 flex flex-col">
-            <div className="bg-slate-900/60 backdrop-blur-xl border border-white/10 p-8 rounded-3xl shadow-2xl flex-1">
-              <div className="flex justify-between items-end mb-8">
-                <h2 className="text-xl font-semibold flex items-center gap-3 text-white">
+            <div className="bg-slate-900/60 backdrop-blur-xl border border-white/10 p-6 rounded-3xl shadow-2xl">
+              <div className="flex justify-between items-end mb-5">
+                <h2 className="text-lg font-semibold flex items-center gap-3 text-white">
                   <Zap className="text-cyan-400" /> What sounds good?
                 </h2>
-                <span className="text-xs font-mono text-cyan-400 bg-cyan-950/50 px-3 py-1 rounded-full border border-cyan-500/20">
-                  {activePrefs.length} chosen
-                </span>
+                <div className="flex items-center gap-3"><span className="text-xs font-mono text-cyan-400">{activePrefs.length} chosen</span>{activePrefs.length < PREFERENCES.length && <button type="button" onClick={selectAllPreferences} className="text-xs text-slate-500 transition-colors hover:text-white">All</button>}{activePrefs.length > 0 && <button type="button" onClick={clearPreferences} className="text-xs text-slate-500 transition-colors hover:text-white">Clear</button>}</div>
               </div>
+              <p className="mb-5 text-sm text-slate-400">Pick the ingredients for your day. Triply will balance them with your time and pace.</p>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
                 <AnimatePresence>
                   {PREFERENCES.map((pref, index) => {
                     const isActive = activePrefs.includes(pref.id);
@@ -246,16 +435,16 @@ export default function TravelDashboard() {
                         initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 * index }}
                         onClick={() => togglePref(pref.id)}
                         whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                        className={`cursor-pointer relative overflow-hidden rounded-2xl border p-5 transition-all duration-300 ${isActive ? 'bg-cyan-900/30 border-cyan-400 shadow-[0_0_20px_rgba(34,211,238,0.15)]' : 'bg-black/40 border-white/5 hover:border-white/20 hover:bg-white/5'}`}
+                        className={`cursor-pointer relative overflow-hidden rounded-2xl border p-3 transition-all duration-300 ${isActive ? 'bg-cyan-900/30 border-cyan-400 shadow-[0_0_20px_rgba(34,211,238,0.15)]' : 'bg-black/40 border-white/5 hover:border-white/20 hover:bg-white/5'}`}
                       >
                         {isActive && <motion.div layoutId={`glow-${pref.id}`} className="absolute inset-0 bg-gradient-to-br from-cyan-400/10 to-transparent" initial={{ opacity: 0 }} animate={{ opacity: 1 }} />}
-                        <div className="relative z-10 flex items-start gap-4">
-                          <div className={`p-3 rounded-xl transition-colors ${isActive ? 'bg-cyan-500/20 text-cyan-400' : 'bg-slate-800 text-slate-400'}`}>
-                            <Icon size={20} />
+                        <div className="relative z-10 flex items-center gap-2.5">
+                          <div className={`rounded-xl p-2 transition-colors ${isActive ? 'bg-cyan-500/20 text-cyan-400' : 'bg-slate-800 text-slate-400'}`}>
+                            <Icon size={17} />
                           </div>
-                          <div>
-                            <h3 className={`font-medium mb-1 transition-colors ${isActive ? 'text-white' : 'text-slate-300'}`}>{pref.title}</h3>
-                            <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">{pref.category}</p>
+                          <div className="min-w-0">
+                            <h3 className={`truncate text-sm font-medium transition-colors ${isActive ? 'text-white' : 'text-slate-300'}`}>{pref.title}</h3>
+                            <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-slate-500">{pref.category}</p>
                           </div>
                         </div>
                         <div className={`absolute top-4 right-4 w-2 h-2 rounded-full transition-colors duration-300 ${isActive ? 'bg-cyan-400 shadow-[0_0_8px_#22d3ee]' : 'bg-slate-800'}`} />
@@ -288,8 +477,16 @@ export default function TravelDashboard() {
                 </div>
               </div>
             </motion.button>
+            <button type="button" onClick={() => setSaved(!saved)} className="flex items-center justify-center gap-2 py-2 text-sm text-slate-400 transition-colors hover:text-white"><Heart size={16} fill={saved ? 'currentColor' : 'none'} className={saved ? 'text-rose-300' : ''} /> {saved ? 'Trip idea saved' : 'Save this trip idea'}</button>
           </motion.div>
         </div>
+
+        <section id="inspiration" className="mt-20 border-t border-white/10 pt-9">
+          <div className="mb-6 flex items-end justify-between"><div><p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-amber-300">A little inspiration</p><h2 className="text-3xl font-semibold text-white">Start with a feeling.</h2></div><SunMedium className="text-amber-300" size={28} /></div>
+          <div className="grid gap-4 md:grid-cols-3">
+            {QUICK_TRIPS.map((trip, index) => <motion.button type="button" key={trip.city} onClick={() => { setCities(trip.city); scrollToPlanner(); }} whileHover={{ y: -5 }} whileTap={{ scale: 0.98 }} className={`group relative min-h-44 overflow-hidden rounded-3xl border border-white/10 bg-slate-900/75 p-6 text-left text-white shadow-xl backdrop-blur-xl ${index === 0 ? 'hover:border-orange-300/60' : index === 1 ? 'hover:border-cyan-300/60' : 'hover:border-amber-300/60'}`}><div className={`absolute -right-8 -top-10 text-[9rem] font-black leading-none opacity-10 ${index === 0 ? 'text-orange-300' : index === 1 ? 'text-cyan-300' : 'text-amber-300'}`}>{trip.city[0]}</div><div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent" /><ArrowUpRight className="absolute right-5 top-5 text-slate-400 transition-transform group-hover:translate-x-1 group-hover:-translate-y-1 group-hover:text-white" size={20} /><div className="relative mt-16"><p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">Quick route {index + 1}</p><h3 className="text-2xl font-semibold">{trip.city}</h3><p className="mt-1 text-sm text-slate-400">{trip.note}</p></div></motion.button>)}
+          </div>
+        </section>
       </main>
     </div>
   );
