@@ -8,7 +8,6 @@ from app.models.route import Base as RouteBase
 
 UserBase.metadata.create_all(bind=engine)
 RouteBase.metadata.create_all(bind=engine)
-Base.metadata.create_all(bind=engine)
 
 def get_application() -> FastAPI:
     application = FastAPI(
