@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.schemas.user import UserResponse
 
@@ -21,6 +21,18 @@ class RegisterRequest(BaseModel):
             raise ValueError("Name must contain at least 2 characters.")
         return value
 
+    @field_validator("email")
+    @classmethod
+    def reject_disposable_email(cls, value: EmailStr) -> EmailStr:
+        disposable_domains = {
+            "10minutemail.com", "guerrillamail.com", "mailinator.com", "sharklasers.com",
+            "tempmail.com", "temp-mail.org", "yopmail.com", "getnada.com", "throwaway.email",
+        }
+        domain = str(value).rsplit("@", 1)[-1].lower().rstrip(".")
+        if domain in disposable_domains:
+            raise ValueError("Temporary or disposable email addresses are not allowed.")
+        return value
+
     @field_validator("password")
     @classmethod
     def validate_password(cls, value: str) -> str:
@@ -39,6 +51,13 @@ class RegisterRequest(BaseModel):
 
 
 class AuthResponse(BaseModel):
-    access_token: str
+    access_token: str | None = None
     token_type: str = "bearer"
     user: UserResponse
+    requires_2fa: bool = True
+    challenge_id: str | None = None
+
+
+class VerifyOTPRequest(BaseModel):
+    challenge_id: str = Field(min_length=36, max_length=36)
+    code: str = Field(pattern=r"^\d{6}$")

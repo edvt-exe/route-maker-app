@@ -1,8 +1,27 @@
 from sqlalchemy.orm import Session
 from typing import List
+from urllib.parse import urlencode
 from app.models.route import Route, Waypoint
-from app.schemas.route import RouteCreate
+from app.schemas.route import DailyItinerary, RouteCreate
 from app.services.itinerary import flatten_itineraries, generate_itineraries
+
+
+def build_navigation_url(itineraries: list[DailyItinerary], transport: str) -> str | None:
+    """Build a Google Maps universal directions URL in itinerary order."""
+    waypoints = flatten_itineraries(itineraries)
+    if len(waypoints) < 2:
+        return None
+
+    coordinates = [f"{waypoint.latitude:.6f},{waypoint.longitude:.6f}" for waypoint in waypoints]
+    params = {
+        "api": "1",
+        "origin": coordinates[0],
+        "destination": coordinates[-1],
+        "travelmode": {"walking": "walking", "public transport": "transit", "by car": "driving"}.get(transport, "walking"),
+    }
+    if len(coordinates) > 2:
+        params["waypoints"] = "|".join(coordinates[1:-1])
+    return f"https://www.google.com/maps/dir/?{urlencode(params)}"
 
 def create_user_route(db: Session, route: RouteCreate, user_id: int):
     itineraries = generate_itineraries(route)

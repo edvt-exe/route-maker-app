@@ -12,6 +12,8 @@ import {
   TrainFront, Car, WalletCards, SunMedium, Heart, ArrowUpRight
 } from 'lucide-react';
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
 const AnimatedMapBackground = () => {
   const [isMounted, setIsMounted] = useState(false);
 
@@ -76,8 +78,6 @@ const PREFERENCES = [
   { id: 'slow-pace', icon: Footprints, title: 'Leisurely Stroll', category: 'Pacing' },
 ];
 
-const TRIP_TYPES = ['Weekend escape', 'Day trip', 'Slow holiday', 'City break'];
-const BUDGETS = ['Under $50', '$50 - $150', '$150+'];
 const TRANSPORT = [
   { id: 'walk', label: 'Mostly walking', icon: Footprints },
   { id: 'transit', label: 'Public transport', icon: TrainFront },
@@ -92,7 +92,7 @@ const QUICK_TRIPS = [
 
 type DailyPlan = { start: string; final: string };
 type GeocodedPlace = { display_name: string; lat: string; lon: string };
-type CityPoi = { name: string; city: string; category: string; latitude: number; longitude: number; cost: number; duration_minutes: number; rating: number; tags: string[]; is_premium: boolean; required: boolean };
+type CityPoi = { name: string; city: string; category: string; latitude: number; longitude: number; cost: number; duration_minutes: number; rating: number; popularity_score: number; cuisine_types: string[]; wheelchair_accessible: boolean; tags: string[]; is_premium: boolean; required: boolean };
 
 export default function TravelDashboard() {
   const [user, setUser] = useState<{ name: string; email: string } | null>(null);
@@ -109,9 +109,13 @@ export default function TravelDashboard() {
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("17:00");
   const [mealsPerDay, setMealsPerDay] = useState<number>(1);
+  const [diningBudget, setDiningBudget] = useState<number>(80);
+  const [partySize, setPartySize] = useState<number>(2);
+  const [cuisineTypes, setCuisineTypes] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [tripType, setTripType] = useState(TRIP_TYPES[0]);
-  const [budget, setBudget] = useState(BUDGETS[1]);
+  const [budget, setBudget] = useState<number>(500);
+  const [maxWalkingDistance, setMaxWalkingDistance] = useState<number>(5);
+  const [accessibilityRequired, setAccessibilityRequired] = useState(false);
   const [transport, setTransport] = useState('walk');
   const [saved, setSaved] = useState(false);
   const [generatedRoute, setGeneratedRoute] = useState<RouteData | null>(null);
@@ -158,7 +162,6 @@ export default function TravelDashboard() {
 
   const surprisePlan = () => {
     setCities("Bucharest");
-    setTripType("City break");
     setTransport("walk");
     setActivePrefs(["landmarks", "culture", "parks"]);
     scrollToPlanner();
@@ -210,7 +213,7 @@ export default function TravelDashboard() {
       if (!tags.name || latitude === undefined || longitude === undefined) return [];
       const rawCategory = tags.amenity === "cafe" ? "Local Cafes" : tags.amenity === "restaurant" ? "Fine Dining" : tags.tourism === "museum" || tags.tourism === "gallery" ? "Arts & Culture" : tags.tourism === "viewpoint" ? "Viewpoints" : tags.leisure === "park" ? "Parks & Gardens" : "Historical Landmarks";
       const cost = rawCategory === "Fine Dining" ? 80 : rawCategory === "Local Cafes" ? 15 : rawCategory === "Arts & Culture" ? 20 : 0;
-      return [{ name: tags.name, city, category: rawCategory, latitude, longitude, cost, duration_minutes: rawCategory === "Historical Landmarks" ? 45 : 60, rating: 0, tags: Object.values(tags), is_premium: false, required: true }];
+      return [{ name: tags.name, city, category: rawCategory, latitude, longitude, cost, duration_minutes: rawCategory === "Historical Landmarks" ? 45 : 60, rating: 0, popularity_score: 0, cuisine_types: tags.cuisine ? tags.cuisine.split(";").map((cuisine) => cuisine.trim()) : [], wheelchair_accessible: tags.wheelchair === "yes", tags: Object.values(tags), is_premium: false, required: false }];
     });
     if (overpassPois.length >= 10) return overpassPois.slice(0, 10);
 
@@ -225,7 +228,7 @@ export default function TravelDashboard() {
           const name = result.name || result.display_name.split(",")[0];
           if (!name) continue;
           const rawCategory = category === "cafe" ? "Local Cafes" : category === "museum" ? "Arts & Culture" : category === "park" ? "Parks & Gardens" : "Historical Landmarks";
-          fallbackPois.push({ name, city, category: rawCategory, latitude: Number(result.lat), longitude: Number(result.lon), cost: category === "cafe" ? 15 : category === "museum" ? 20 : 0, duration_minutes: 45, rating: 0, tags: [category], is_premium: false, required: true });
+          fallbackPois.push({ name, city, category: rawCategory, latitude: Number(result.lat), longitude: Number(result.lon), cost: category === "cafe" ? 15 : category === "museum" ? 20 : 0, duration_minutes: 45, rating: 0, popularity_score: 0, cuisine_types: [], wheelchair_accessible: false, tags: [category], is_premium: false, required: false });
         }
       } catch {
         // Keep any places found by earlier providers.
@@ -274,7 +277,6 @@ export default function TravelDashboard() {
         daily_plans: generatedDailyPlans,
         points_of_interest: pointsOfInterest,
         preferences: {
-          trip_type: tripType,
           pacing_tags: activePrefs.map((preference) => preference === "fast-pace" ? "Action Packed" : preference === "slow-pace" ? "Leisurely Stroll" : preference),
           transport: transport === "walk" ? "walking" : transport === "transit" ? "public transport" : "by car",
           budget,
@@ -283,12 +285,22 @@ export default function TravelDashboard() {
           start_time: startTime,
           end_time: endTime,
           meals_per_day: mealsPerDay,
+          dining_budget: diningBudget,
+          party_size: partySize,
+          cuisine_types: cuisineTypes.split(",").map((cuisine) => cuisine.trim()).filter(Boolean),
+          max_walking_distance_km: maxWalkingDistance,
+          accessibility_required: accessibilityRequired,
           start_buffer_minutes: 60,
           end_buffer_minutes: 60,
         },
       };
       const token = localStorage.getItem("triply_token");
-      const response = await fetch("http://localhost:8000/api/v1/routes/", {
+      if (!token?.trim()) {
+        localStorage.removeItem("triply_user");
+        window.location.assign("/auth");
+        return;
+      }
+      const response = await fetch(`${API_URL}/api/v1/routes/`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -299,6 +311,12 @@ export default function TravelDashboard() {
 
       if (!response.ok) {
         const details = await response.json().catch(() => null);
+        if (response.status === 401 || response.status === 403) {
+          localStorage.removeItem("triply_token");
+          localStorage.removeItem("triply_user");
+          window.location.assign("/auth");
+          return;
+        }
         throw new Error(details?.detail ?? `API Error: ${response.status}`);
       }
 
@@ -359,6 +377,7 @@ export default function TravelDashboard() {
           <nav className="flex items-center gap-3 text-sm text-slate-400 sm:gap-6">
             <a href="#planner" className="hidden transition-colors hover:text-white sm:block">Plan a trip</a>
             <a href="#inspiration" className="hidden transition-colors hover:text-white sm:block">Inspiration</a>
+            {user && <Link href="/routes/history" className="hidden transition-colors hover:text-white sm:block">My Routes</Link>}
             {user ? <div className="relative"><button type="button" onClick={() => setIsAccountOpen(!isAccountOpen)} className="flex items-center gap-2 rounded-full border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-white transition-colors hover:border-cyan-300 hover:text-cyan-200 sm:px-4"><UserRound size={16} /><span className="max-w-32 truncate">{user.name}</span></button>{isAccountOpen && <div className="absolute right-0 top-14 z-20 w-72 rounded-3xl border border-white/15 bg-slate-950/95 p-5 text-left shadow-2xl backdrop-blur-xl"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-300">Your account</p><div className="mt-4 flex items-center gap-3"><span className="grid size-10 place-items-center rounded-full bg-cyan-300/15 text-cyan-200"><UserRound size={18} /></span><div className="min-w-0"><p className="truncate text-sm font-semibold text-white">{user.name}</p><p className="truncate text-xs text-slate-400">{user.email}</p></div></div><div className="my-5 border-t border-white/10" /><Link href="/settings" onClick={() => setIsAccountOpen(false)} className="flex items-center gap-2 text-sm text-slate-300 transition-colors hover:text-white"><Settings size={15} className="text-cyan-300" /> Account settings</Link><div className="mt-4 grid gap-2"><button type="button" onClick={handleChangeAccount} className="flex items-center gap-2 rounded-2xl border border-cyan-300/30 px-3 py-2.5 text-xs text-cyan-200 transition-colors hover:border-cyan-200 hover:bg-cyan-300/10"><UserRound size={14} /> Change account</button><button type="button" onClick={handleSignOut} className="flex items-center gap-2 rounded-2xl border border-white/10 px-3 py-2.5 text-xs text-slate-300 transition-colors hover:border-rose-300/50 hover:text-rose-200"><LogOut size={14} /> Sign out</button></div></div>}</div> : <Link href="/auth" className="flex items-center gap-2 rounded-full border border-white/15 px-3 py-2 text-white transition-colors hover:border-cyan-300 hover:text-cyan-200 sm:px-4"><UserRound size={16} /> <span className="hidden sm:inline">Log in</span></Link>}
           </nav>
         </header>
@@ -392,8 +411,8 @@ export default function TravelDashboard() {
           </motion.div>
         </motion.div>
 
-        <div id="planner" className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          <motion.div initial={{ opacity: 0, x: -30 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }} className="lg:col-span-5 space-y-6">
+        <div id="planner" className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:items-start">
+          <motion.div initial={{ opacity: 0, x: -30 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }} className="space-y-6 lg:contents">
             <div className="bg-slate-900/60 backdrop-blur-xl border border-white/10 p-6 rounded-3xl shadow-2xl relative overflow-hidden group">
               <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
               <h2 className="text-lg font-semibold mb-5 flex items-center gap-3 text-white">
@@ -425,6 +444,8 @@ export default function TravelDashboard() {
               <div className="mt-5 border-t border-white/10 pt-5">
                 <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">Meals per day</label>
                 <div className="mt-2 flex items-center gap-3"><button type="button" aria-label="Fewer meals" onClick={() => setMealsPerDay((value) => Math.max(0, value - 1))} className="grid size-10 place-items-center rounded-full border border-white/15 text-lg text-white hover:border-cyan-300">-</button><span className="min-w-10 text-center text-lg font-semibold text-white">{mealsPerDay}</span><button type="button" aria-label="More meals" onClick={() => setMealsPerDay((value) => Math.min(4, value + 1))} className="grid size-10 place-items-center rounded-full border border-white/15 text-lg text-white hover:border-cyan-300">+</button><span className="text-xs text-slate-500">One hour is reserved before and after each day.</span></div>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2"><label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Dining budget total<input type="number" min="0" step="1" value={diningBudget} onChange={(event) => setDiningBudget(Math.max(0, Number(event.target.value)))} className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white focus:border-cyan-400 focus:outline-none" /></label><label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Party size<input type="number" min="1" max="50" step="1" value={partySize} onChange={(event) => setPartySize(Math.max(1, Math.min(50, Number(event.target.value))))} className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white focus:border-cyan-400 focus:outline-none" /></label></div>
+                <label className="mt-3 block text-xs font-semibold uppercase tracking-wider text-slate-400">Cuisine types<span className="mt-2 block text-[11px] font-normal normal-case tracking-normal text-slate-500">Comma-separated, for example Italian, Japanese</span><input type="text" value={cuisineTypes} onChange={(event) => setCuisineTypes(event.target.value)} placeholder="Italian, Japanese" className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none" /></label>
               </div>
             </div>
 
@@ -432,21 +453,19 @@ export default function TravelDashboard() {
               <div className="pointer-events-none absolute -right-16 -top-16 size-40 rounded-full border border-amber-300/15" />
               <h2 className="relative mb-2 flex items-center gap-3 text-lg font-semibold text-white"><WalletCards className="text-amber-300" /> Shape the day</h2>
               <p className="mb-5 text-sm text-slate-400">Tune the rhythm, movement, and spend before Triply builds your route.</p>
-              <div className="mb-5 flex flex-wrap gap-2 text-[10px] font-semibold uppercase tracking-wider"><span className="rounded-full bg-cyan-300/10 px-3 py-1.5 text-cyan-200">{tripType}</span><span className="rounded-full bg-amber-300/10 px-3 py-1.5 text-amber-200">{transport === 'walk' ? 'Walking' : transport === 'transit' ? 'Transit' : 'Car'}</span><span className="rounded-full bg-white/5 px-3 py-1.5 text-slate-300">{budget}</span></div>
-              <label className="mb-3 block text-xs font-semibold uppercase tracking-wider text-slate-500">What kind of trip?</label>
-              <div className="grid grid-cols-2 gap-2">
-                {TRIP_TYPES.map((type) => <button type="button" key={type} onClick={() => setTripType(type)} className={`rounded-full border px-3 py-2.5 text-left text-xs transition-all ${tripType === type ? 'border-amber-300 bg-amber-300/15 text-amber-200 shadow-[0_0_18px_rgba(251,191,36,0.12)]' : 'border-white/10 text-slate-400 hover:border-white/30 hover:text-white'}`}>{type}</button>)}
-              </div>
+              <div className="mb-5 flex flex-wrap gap-2 text-[10px] font-semibold uppercase tracking-wider"><span className="rounded-full bg-amber-300/10 px-3 py-1.5 text-amber-200">{budget} LEI</span><span className="rounded-full bg-cyan-300/10 px-3 py-1.5 text-cyan-200">{transport === 'walk' ? 'Walking' : transport === 'transit' ? 'Transit' : 'Car'}</span></div>
               <label className="mb-3 mt-5 block text-xs font-semibold uppercase tracking-wider text-slate-500">Getting around</label>
               <div className="grid grid-cols-3 gap-2">
                 {TRANSPORT.map(({ id, label, icon: Icon }) => <button type="button" key={id} title={label} onClick={() => setTransport(id)} className={`grid place-items-center gap-1.5 rounded-2xl border p-2.5 text-[11px] transition-all ${transport === id ? 'border-cyan-300 bg-cyan-300/10 text-cyan-200 shadow-[0_0_18px_rgba(34,211,238,0.12)]' : 'border-white/10 text-slate-500 hover:border-white/30 hover:text-white'}`}><Icon size={17} />{label.replace('Mostly ', '')}</button>)}
               </div>
-              <label className="mb-3 mt-5 block text-xs font-semibold uppercase tracking-wider text-slate-500">Comfort budget</label>
-              <div className="flex gap-2">{BUDGETS.map((item) => <button type="button" key={item} onClick={() => setBudget(item)} className={`flex-1 rounded-full border px-2 py-2.5 text-xs transition-all ${budget === item ? 'border-amber-300 bg-amber-300/10 text-amber-200' : 'border-white/10 text-slate-500 hover:border-white/30 hover:text-white'}`}>{item}</button>)}</div>
+              <label className="mb-3 mt-5 block text-xs font-semibold uppercase tracking-wider text-slate-500">Exact budget (LEI)</label>
+              <div className="relative"><input type="number" min="0" step="1" value={budget} onChange={(event) => setBudget(Math.max(0, Number(event.target.value)))} className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 pr-16 text-white outline-none transition-shadow focus:border-amber-300 focus:ring-2 focus:ring-amber-300/30" /><span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs font-semibold text-amber-300">LEI</span></div>
+              <div className="mt-5 border-t border-white/10 pt-5"><label className="block text-xs font-semibold uppercase tracking-wider text-slate-500">Max walking distance <span className="float-right text-cyan-300">{maxWalkingDistance} km</span></label><input type="range" min="1" max="30" step="1" value={maxWalkingDistance} onChange={(event) => setMaxWalkingDistance(Number(event.target.value))} className="mt-4 w-full accent-cyan-300" /><div className="mt-1 flex justify-between text-[10px] text-slate-600"><span>1 km</span><span>30 km</span></div></div>
+              <label className="mt-5 flex cursor-pointer items-center justify-between gap-4 rounded-2xl border border-white/10 bg-black/20 p-3 text-xs text-slate-300"><span><span className="block font-semibold text-white">Wheelchair / stroller access</span><span className="mt-1 block text-slate-500">Prefer accessible destinations</span></span><input type="checkbox" checked={accessibilityRequired} onChange={(event) => setAccessibilityRequired(event.target.checked)} className="size-5 accent-cyan-300" /></label>
             </div>
           </motion.div>
 
-          <motion.div initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.4 }} className="lg:col-span-7 space-y-6 flex flex-col">
+          <motion.div initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.4 }} className="flex flex-col space-y-6 lg:contents">
             <div className="bg-slate-900/60 backdrop-blur-xl border border-white/10 p-6 rounded-3xl shadow-2xl">
               <div className="flex justify-between items-end mb-5">
                 <h2 className="text-lg font-semibold flex items-center gap-3 text-white">

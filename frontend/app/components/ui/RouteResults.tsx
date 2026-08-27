@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ExternalLink, Loader2, MapPin, Route as RouteIcon } from "lucide-react";
+import { ArrowLeft, Download, ExternalLink, Loader2, Map, MapPin, Navigation, Route as RouteIcon, Save, TriangleAlert } from "lucide-react";
 import TriplyLogo from "../shared/TriplyLogo";
 
 const routeColors = ["#22d3ee", "#a78bfa", "#fbbf24", "#fb7185", "#34d399", "#f97316", "#60a5fa", "#e879f9"];
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export type Waypoint = {
   id?: number;
@@ -14,6 +15,10 @@ export type Waypoint = {
   latitude: number;
   longitude: number;
   order_index: number;
+  arrival_time?: string | null;
+  departure_time?: string | null;
+  schedule_label?: string;
+  transit_to_next?: { transit_mode: string; travel_duration_minutes: number } | null;
 };
 
 export type DailyItinerary = {
@@ -28,6 +33,8 @@ export type RouteData = {
   city: string;
   waypoints: Waypoint[];
   itineraries?: DailyItinerary[];
+  navigation_url?: string | null;
+  initial_budget?: number | null;
 };
 
 type LeafletMap = {
@@ -132,6 +139,7 @@ function selectedStopIcon(leaflet: LeafletApi, color: string) {
 }
 
 export default function RouteResults({ route, onBack }: { route: RouteData; onBack: () => void }) {
+  const timelineRef = useRef<HTMLElement>(null);
   const mapElement = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<LeafletMap | null>(null);
   const markerRecords = useRef<Record<string, { marker: LeafletMarker; normalIcon: unknown; selectedIcon: unknown }>>({});
@@ -139,9 +147,55 @@ export default function RouteResults({ route, onBack }: { route: RouteData; onBa
   const [selectedStop, setSelectedStop] = useState<string | null>(null);
   const [isMapLoading, setIsMapLoading] = useState(true);
   const [mapError, setMapError] = useState("");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const orderedWaypoints = [...route.waypoints].sort((first, second) => first.order_index - second.order_index);
   const dailyRoutes = route.itineraries?.length ? route.itineraries.map((itinerary) => ({ day: itinerary.day, waypoints: [itinerary.start, ...itinerary.stops, itinerary.final_destination] })) : [{ day: 1, waypoints: orderedWaypoints }];
   const mapWaypoints = dailyRoutes.flatMap((dailyRoute) => dailyRoute.waypoints);
+  const estimatedCost = mapWaypoints.reduce((total, waypoint) => total + (waypoint.estimated_cost ?? 0), 0);
+  const remainingBudget = Math.max(0, (route.initial_budget ?? 0) - estimatedCost);
+  const fatigueWarnings = dailyRoutes.map((dailyRoute) => {
+    let walkingLegs = 0;
+    return dailyRoute.waypoints.slice(0, -1).map((waypoint, index) => {
+      const isWalking = waypoint.transit_to_next?.transit_mode === "walking" || waypoint.transit_to_next?.transit_mode === "foot";
+      walkingLegs = isWalking ? walkingLegs + 1 : 0;
+      const next = dailyRoute.waypoints[index + 1];
+      const warning = walkingLegs >= 3 && !/cafe|restaurant|dining|coffee/i.test(next.category);
+      return warning ? index + 1 : null;
+    }).filter((index): index is number => index !== null);
+  });
+
+  function buildMapsUrl() {
+    if (mapWaypoints.length < 2) return "";
+    const coordinates = mapWaypoints.map((waypoint) => `${waypoint.latitude},${waypoint.longitude}`);
+    const params = new URLSearchParams({ api: "1", origin: coordinates[0], destination: coordinates.at(-1) ?? coordinates[0], travelmode: "walking" });
+    if (coordinates.length > 2) params.set("waypoints", coordinates.slice(1, -1).join("|"));
+    return `https://www.google.com/maps/dir/?${params.toString()}`;
+  }
+
+  async function downloadBoardingPass() {
+    if (!timelineRef.current) return;
+    const html2pdf = (await import("html2pdf.js")).default;
+    await html2pdf().set({
+      margin: 0.35,
+      filename: `${route.city.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-boarding-pass.pdf`,
+      image: { type: "jpeg", quality: 0.98 },
+      html2canvas: { scale: 2, backgroundColor: "#040814", useCORS: true },
+      jsPDF: { unit: "in", format: "a4", orientation: "portrait" },
+    }).from(timelineRef.current).save();
+  }
+
+  async function saveCurrentRoute() {
+    const token = localStorage.getItem("triply_token");
+    if (!token) return;
+    setSaveState("saving");
+    try {
+      const response = await fetch(`${API_URL}/api/v1/routes/save`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ title: route.title, city: route.city, payload: route }) });
+      if (!response.ok) throw new Error("Unable to save this route.");
+      setSaveState("saved");
+    } catch {
+      setSaveState("error");
+    }
+  }
 
   useEffect(() => {
     let isActive = true;
@@ -240,13 +294,14 @@ export default function RouteResults({ route, onBack }: { route: RouteData; onBa
     <main className="min-h-screen bg-[#040814] text-slate-200">
       <header className="mx-auto flex max-w-[1500px] items-center justify-between border-b border-white/10 px-6 py-5 lg:px-10">
         <TriplyLogo />
-        <button type="button" onClick={onBack} className="flex items-center gap-2 text-sm text-slate-300 transition-colors hover:text-cyan-200"><ArrowLeft size={16} /> Plan another route</button>
+        <div className="flex flex-wrap items-center justify-end gap-3"><button type="button" onClick={onBack} className="flex items-center gap-2 text-sm text-slate-300 transition-colors hover:text-cyan-200"><ArrowLeft size={16} /> Plan another route</button><button type="button" onClick={saveCurrentRoute} disabled={saveState === "saving" || saveState === "saved"} className="flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm font-semibold text-white transition-colors hover:border-cyan-300 hover:text-cyan-200 disabled:opacity-60"><Save size={16} />{saveState === "saved" ? "Saved" : saveState === "saving" ? "Saving..." : saveState === "error" ? "Retry save" : "Save route"}</button><button type="button" onClick={downloadBoardingPass} className="flex items-center gap-2 rounded-full border border-amber-300/50 bg-amber-300/10 px-4 py-2 text-sm font-semibold text-amber-200 transition-colors hover:bg-amber-300/20"><Download size={16} /> Download Boarding Pass (PDF)</button><a href={buildMapsUrl()} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-full bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-200"><Map size={16} /> Launch in Google Maps</a></div>
       </header>
       <div className="mx-auto grid min-h-[calc(100vh-78px)] max-w-[1500px] grid-cols-1 lg:grid-cols-[40%_60%]">
-        <section className="order-2 flex flex-col border-r border-white/10 px-6 py-8 lg:order-1 lg:px-10 lg:py-12">
+        <section ref={timelineRef} className="order-2 flex flex-col border-r border-white/10 bg-[#040814] px-6 py-8 lg:order-1 lg:px-10 lg:py-12">
           <div className="mb-8"><p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-300">Your route is ready</p><h1 className="mt-3 text-3xl font-semibold text-white sm:text-4xl">{route.title}</h1><p className="mt-3 text-slate-400">{route.city} · {orderedWaypoints.length} stops across {dailyRoutes.length} {dailyRoutes.length === 1 ? "day" : "days"}</p><div className="mt-5 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-400"><span className="font-semibold uppercase tracking-wider text-slate-500">Daily routes</span>{dailyRoutes.map((dailyRoute, index) => <span key={dailyRoute.day} className="inline-flex items-center gap-1.5"><span style={{ backgroundColor: routeColors[index % routeColors.length] }} className="size-2 rounded-full" />Day {dailyRoute.day}</span>)}</div></div>
+          <div className="mb-8 grid gap-3 sm:grid-cols-2"><div className="rounded-2xl border border-cyan-300/20 bg-cyan-300/5 p-4"><p className="text-xs uppercase tracking-[0.18em] text-cyan-200">Trip Summary</p><p className="mt-2 text-sm text-slate-400">Estimated remaining budget</p><p className="mt-1 text-2xl font-semibold text-white">{remainingBudget.toFixed(0)} LEI</p><p className="mt-1 text-xs text-slate-500">Estimated spend: {estimatedCost.toFixed(0)} LEI</p></div>{fatigueWarnings.some((warnings) => warnings.length > 0) && <div className="rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4 text-amber-100"><p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em]"><TriangleAlert size={16} /> Fatigue warning</p><p className="mt-2 text-sm">High Fatigue Zone: Consider adding a rest stop here.</p></div>}</div>
           <div className="relative flex-1">
-            {dailyRoutes.map((dailyRoute, dayIndex) => <div key={dailyRoute.day} className="mb-10 last:mb-0"><div className="mb-5 flex items-center gap-3"><span style={{ backgroundColor: routeColors[dayIndex % routeColors.length] }} className="size-3 rounded-full" /><h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-white">Day {dailyRoute.day}</h2><span className="text-xs text-slate-500">{dailyRoute.waypoints.length} stops</span></div>{dailyRoute.waypoints.map((waypoint, index) => { const markerKey = `${dailyRoute.day}-${index}`; const parking = isParkingWaypoint(waypoint); return <div key={`${dailyRoute.day}-${waypoint.name}-${index}`} className="relative flex gap-4 pb-8 last:pb-0"><div className="relative flex w-8 shrink-0 justify-center"><span style={{ borderColor: routeColors[dayIndex % routeColors.length], color: routeColors[dayIndex % routeColors.length] }} className="z-10 grid size-8 place-items-center rounded-full border bg-slate-950 text-sm font-semibold">{index + 1}</span>{index < dailyRoute.waypoints.length - 1 && <span style={{ backgroundColor: routeColors[dayIndex % routeColors.length] }} className="absolute top-8 h-full w-px opacity-70" />}</div><button type="button" onClick={() => focusStop(dailyRoute, index)} className={`min-w-0 flex-1 rounded-2xl border p-3 text-left transition-all ${selectedStop === markerKey ? "border-cyan-300/70 bg-cyan-300/10 shadow-[0_0_24px_rgba(34,211,238,0.14)]" : "border-transparent hover:border-white/15 hover:bg-white/5"}`} aria-label={`Show ${waypoint.name} on map`}><p className={`text-xs font-semibold uppercase tracking-[0.16em] ${parking ? "text-orange-300" : "text-slate-500"}`}>{parking ? "P · Parking" : waypoint.category}</p><h3 className="mt-1 text-lg font-medium text-white">{waypoint.name}</h3><p className="mt-1 text-xs text-slate-500">{waypoint.latitude.toFixed(4)}, {waypoint.longitude.toFixed(4)}</p></button></div>; })}</div>)}
+            {dailyRoutes.map((dailyRoute, dayIndex) => <div key={dailyRoute.day} className="mb-10 last:mb-0"><div className="mb-5 flex items-center gap-3"><span style={{ backgroundColor: routeColors[dayIndex % routeColors.length] }} className="size-3 rounded-full" /><h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-white">Day {dailyRoute.day}</h2><span className="text-xs text-slate-500">{dailyRoute.waypoints.length} stops</span></div>{dailyRoute.waypoints.map((waypoint, index) => { const markerKey = `${dailyRoute.day}-${index}`; const parking = isParkingWaypoint(waypoint); const warning = fatigueWarnings[dayIndex].includes(index); return <div key={`${dailyRoute.day}-${waypoint.name}-${index}`} className="relative flex gap-4 pb-8 last:pb-0"><div className="relative flex w-8 shrink-0 justify-center"><span style={{ borderColor: routeColors[dayIndex % routeColors.length], color: routeColors[dayIndex % routeColors.length] }} className="z-10 grid size-8 place-items-center rounded-full border bg-slate-950 text-sm font-semibold">{index + 1}</span>{index < dailyRoute.waypoints.length - 1 && <span style={{ backgroundColor: routeColors[dayIndex % routeColors.length] }} className="absolute top-8 h-full w-px opacity-70" />}</div><button type="button" onClick={() => focusStop(dailyRoute, index)} className={`min-w-0 flex-1 rounded-2xl border p-3 text-left transition-all ${selectedStop === markerKey ? "border-cyan-300/70 bg-cyan-300/10 shadow-[0_0_24px_rgba(34,211,238,0.14)]" : "border-transparent hover:border-white/15 hover:bg-white/5"}`} aria-label={`Show ${waypoint.name} on map`}><p className={`text-xs font-semibold uppercase tracking-[0.16em] ${parking ? "text-orange-300" : "text-slate-500"}`}>{parking ? "P · Parking" : waypoint.category}</p><h3 className="mt-1 text-lg font-medium text-white">{waypoint.name}</h3>{waypoint.schedule_label && <p className="mt-1 text-sm font-semibold text-cyan-200">{waypoint.schedule_label}</p>}<p className="mt-1 text-xs text-slate-500">{waypoint.travel_minutes_from_previous ? `${waypoint.travel_minutes_from_previous} min travel` : "Starting point"}{waypoint.transit_to_next ? ` · next: ${waypoint.transit_to_next.transit_mode} ${waypoint.transit_to_next.travel_duration_minutes} min` : ""}</p>{warning && <span className="mt-2 flex items-center gap-1 text-xs font-semibold text-amber-300"><TriangleAlert size={13} /> Rest/Coffee break recommended here</span>}</button></div>; })}</div>)}
           </div>
           <div className="mt-10 border-t border-white/10 pt-5 text-sm text-slate-400"><RouteIcon className="mb-3 text-cyan-300" size={20} /><p>Drag the map to explore the route. Use the + and - controls or your mouse wheel to zoom.</p><a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-xs text-cyan-300 hover:text-cyan-200">Map data by OpenStreetMap <ExternalLink size={12} /></a></div>
         </section>

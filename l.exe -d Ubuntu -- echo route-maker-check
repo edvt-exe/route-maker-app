@@ -1,0 +1,105 @@
+[1mdiff --git a/backend/app/schemas/route.py b/backend/app/schemas/route.py[m
+[1mindex f85c951..ce88a32 100644[m
+[1m--- a/backend/app/schemas/route.py[m
+[1m+++ b/backend/app/schemas/route.py[m
+[36m@@ -21,6 +21,7 @@[m [mclass PointOfInterest(BaseModel):[m
+     cost: float = Field(default=0, ge=0)[m
+     duration_minutes: int = Field(default=90, ge=15, le=360)[m
+     rating: float = Field(default=0, ge=0, le=5)[m
+[32m+[m[32m    popularity_score: float = Field(default=0, ge=0)[m[41m[m
+     tags: List[str] = Field(default_factory=list)[m
+     near_transit: bool = False[m
+     transit_wait_minutes: int = Field(default=15, ge=0, le=120)[m
+[1mdiff --git a/backend/app/services/itinerary.py b/backend/app/services/itinerary.py[m
+[1mindex 1d4ec24..f6d4b6e 100644[m
+[1m--- a/backend/app/services/itinerary.py[m
+[1m+++ b/backend/app/services/itinerary.py[m
+[36m@@ -98,6 +98,21 @@[m [mdef category_score(poi: PointOfInterest, selected_categories: set[str], budget:[m
+     return score[m
+ [m
+ [m
+[32m+[m[32mdef popularity_sort_key([m[41m[m
+[32m+[m[32m    poi: PointOfInterest,[m[41m[m
+[32m+[m[32m    selected_categories: set[str],[m[41m[m
+[32m+[m[32m    budget: str,[m[41m[m
+[32m+[m[32m    transport: str,[m[41m[m
+[32m+[m[32m) -> tuple[float, float, float, str]:[m[41m[m
+[32m+[m[32m    """Rank eligible places by quality first, with stable contextual tie-breakers."""[m[41m[m
+[32m+[m[32m    return ([m[41m[m
+[32m+[m[32m        -poi.rating,[m[41m[m
+[32m+[m[32m        -poi.popularity_score,[m[41m[m
+[32m+[m[32m        -category_score(poi, selected_categories, budget, transport),[m[41m[m
+[32m+[m[32m        normalize(poi.name),[m[41m[m
+[32m+[m[32m    )[m[41m[m
+[32m+[m[41m[m
+[32m+[m[41m[m
+ def filter_pois(route: RouteCreate, rules: PlanningRules) -> list[PointOfInterest]:[m
+     selected_categories = canonical_categories(route.preferences.categories)[m
+     budget = route.preferences.budget[m
+[36m@@ -153,23 +168,21 @@[m [mdef generate_itineraries(route: RouteCreate) -> list[DailyItinerary]:[m
+     ][m
+     candidates = filter_pois(route.model_copy(update={"points_of_interest": [*route.points_of_interest, *explicit_stops]}), rules)[m
+     itineraries: list[DailyItinerary] = [][m
+[32m+[m[32m    selected_categories = canonical_categories(route.preferences.categories)[m[41m[m
+     unassigned = [poi for poi in candidates if "day " not in normalize(poi.category)][m
+[31m-    grouped: dict[str, list[PointOfInterest]] = {}[m
+[31m-    for poi in unassigned:[m
+[31m-        category = CATEGORY_ALIASES.get(normalize(poi.category), normalize(poi.category))[m
+[31m-        grouped.setdefault(category, []).append(poi)[m
+[31m-    interleaved: list[PointOfInterest] = [][m
+[31m-    while grouped:[m
+[31m-        for category in list(grouped):[m
+[31m-            interleaved.append(grouped[category].pop(0))[m
+[31m-            if not grouped[category]:[m
+[31m-                del grouped[category][m
+[31m-    # Give every day its own pool so the first day cannot consume the whole trip.[m
+[32m+[m[32m    ranked = sorted([m[41m[m
+[32m+[m[32m        unassigned,[m[41m[m
+[32m+[m[32m        key=lambda poi: popularity_sort_key([m[41m[m
+[32m+[m[32m            poi, selected_categories, route.preferences.budget, route.preferences.transport[m[41m[m
+[32m+[m[32m        ),[m[41m[m
+[32m+[m[32m    )[m[41m[m
+[32m+[m[32m    # Reserve only the globally highest-ranked candidates, then distribute them by day.[m[41m[m
+[32m+[m[32m    route_capacity = rules.max_stops * len(plans)[m[41m[m
+[32m+[m[32m    ranked = ranked[:route_capacity][m[41m[m
+     daily_pools: dict[int, list[PointOfInterest]] = {day: [] for day, _, _ in plans}[m
+[31m-    for index, poi in enumerate(interleaved):[m
+[32m+[m[32m    for index, poi in enumerate(ranked):[m[41m[m
+         day = plans[index % len(plans)][0][m
+         daily_pools[day].append(poi)[m
+[31m-    selected_categories = canonical_categories(route.preferences.categories)[m
+     daily_minutes = round(route.preferences.hours_per_day * 60)[m
+ [m
+     for day, start, final in plans:[m
+[36m@@ -181,16 +194,20 @@[m [mdef generate_itineraries(route: RouteCreate) -> list[DailyItinerary]:[m
+         day_candidates = [poi for poi in candidates if normalize(f"day {day}") in normalize(poi.category)][m
+         planning_pool = [*daily_pools[day], *day_candidates][m
+         nearby = planning_pool[:][m
+[31m-        nearby.sort(key=lambda poi: (-category_score(poi, selected_categories, route.preferences.budget, route.preferences.transport), haversine_km(start, poi)))[m
+[32m+[m[32m        nearby.sort(key=lambda poi: popularity_sort_key(poi, selected_categories, route.preferences.budget, route.preferences.transport))[m[41m[m
+ [m
+[31m-        category_counts: dict[str, int] = {}[m
+         meals_scheduled = 0[m
+         visit_count = 0[m
+         while nearby and visit_count < rules.max_stops:[m
+             eligible = [poi for poi in nearby if not (CATEGORY_ALIASES.get(normalize(poi.category), normalize(poi.category)) == "dining" and meals_scheduled >= route.preferences.meals_per_day)][m
+             if not eligible:[m
+                 break[m
+[31m-            next_poi = min(eligible, key=lambda poi: (category_counts.get(CATEGORY_ALIASES.get(normalize(poi.category), normalize(poi.category)), 0) if selected_categories else 0, -category_score(poi, selected_categories, route.preferences.budget, route.preferences.transport), haversine_km(current, poi)))[m
+[32m+[m[32m            next_poi = min([m[41m[m
+[32m+[m[32m                eligible,[m[41m[m
+[32m+[m[32m                key=lambda poi: popularity_sort_key([m[41m[m
+[32m+[m[32m                    poi, selected_categories, route.preferences.budget, route.preferences.transport[m[41m[m
+[32m+[m[32m                ),[m[41m[m
+[32m+[m[32m            )[m[41m[m
+             distance = haversine_km(current, next_poi)[m
+             move_minutes = travel_minutes(distance, route.preferences.transport, next_poi.transit_wait_minutes)[m
+             visit_minutes = min(next_poi.duration_minutes, rules.attraction_minutes)[m
+[36m@@ -206,7 +223,6 @@[m [mdef generate_itineraries(route: RouteCreate) -> list[DailyItinerary]:[m
+             used_minutes += move_minutes + visit_minutes[m
+             total_cost += next_poi.cost[m
+             canonical_category = CATEGORY_ALIASES.get(normalize(next_poi.category), normalize(next_poi.category))[m
+[31m-            category_counts[canonical_category] = category_counts.get(canonical_category, 0) + 1[m
+             visit_count += 1[m
+             if canonical_category == "dining":[m
+                 meals_scheduled += 1[m

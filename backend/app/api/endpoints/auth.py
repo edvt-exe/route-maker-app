@@ -6,9 +6,10 @@ from app.core.database import get_db
 from app.core.security import verify_password, create_access_token
 from app.api.deps import get_current_user
 from app.services.user import get_user_by_email, get_user_by_name, password_is_used, create_user
-from app.schemas.auth import LoginRequest, RegisterRequest, AuthResponse
+from app.schemas.auth import LoginRequest, RegisterRequest, AuthResponse, VerifyOTPRequest
 from app.schemas.user import UserCreate, UserResponse
 from app.models.user import User
+from app.services.otp import create_challenge, send_otp_email, verify_challenge
 
 router = APIRouter()
 
@@ -36,11 +37,17 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)) -> AuthRespon
             status_code=status.HTTP_409_CONFLICT,
             detail="That name or email is already in use.",
         ) from None
-    token = create_access_token(subject=user.id)
+    challenge, code = create_challenge(db, user)
+    try:
+        send_otp_email(user, code)
+    except RuntimeError as error:
+        db.delete(challenge)
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
 
     return AuthResponse(
-        access_token=token,
         user=UserResponse.model_validate(user),
+        challenge_id=challenge.id,
     )
 
 
@@ -55,11 +62,33 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> AuthResponse:
             detail="Incorrect email or password.",
         )
 
-    token = create_access_token(subject=user.id)
+    challenge, code = create_challenge(db, user)
+    try:
+        send_otp_email(user, code)
+    except RuntimeError as error:
+        db.delete(challenge)
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
 
     return AuthResponse(
-        access_token=token,
         user=UserResponse.model_validate(user),
+        challenge_id=challenge.id,
+    )
+
+
+@router.post("/verify-otp", response_model=AuthResponse)
+def verify_otp(body: VerifyOTPRequest, db: Session = Depends(get_db)) -> AuthResponse:
+    """Verify a one-time email code and issue the access token."""
+    user = verify_challenge(db, body.challenge_id, body.code)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="That verification code is invalid, expired, or has too many attempts.",
+        )
+    return AuthResponse(
+        access_token=create_access_token(subject=user.id),
+        user=UserResponse.model_validate(user),
+        requires_2fa=False,
     )
 
 

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, JSON
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 
@@ -28,3 +28,16 @@ class Waypoint(Base):
     order_index = Column(Integer, nullable=False)
 
     route = relationship("Route", back_populates="waypoints")
+
+
+class SavedRoute(Base):
+    __tablename__ = "saved_routes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    title = Column(String, nullable=False)
+    city = Column(String, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    payload = Column(JSON, nullable=False)
+
+    user = relationship("User", back_populates="saved_routes")
