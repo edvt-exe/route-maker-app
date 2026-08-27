@@ -317,6 +317,38 @@ export default function TravelDashboard() {
     return <RouteResults route={generatedRoute} onBack={() => setGeneratedRoute(null)} />;
   }
 
+  if (isGenerating) {
+    return (
+      <main className="relative grid min-h-screen place-items-center overflow-hidden bg-[#040814] px-6 text-slate-200">
+        <AnimatedMapBackground />
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="relative z-10 w-full max-w-2xl text-center"
+          aria-live="polite"
+        >
+          <div className="relative mx-auto mb-10 grid size-40 place-items-center">
+            <motion.div className="absolute inset-0 rounded-full border border-cyan-300/25" animate={{ scale: [0.8, 1.2, 0.8], opacity: [0.2, 0.7, 0.2] }} transition={{ duration: 2.8, repeat: Infinity }} />
+            <motion.div className="absolute inset-5 rounded-full border border-dashed border-amber-300/50" animate={{ rotate: 360 }} transition={{ duration: 8, repeat: Infinity, ease: "linear" }} />
+            <motion.div animate={{ y: [0, -8, 0], rotate: [-4, 4, -4] }} transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}>
+              <Route size={48} className="text-cyan-300" strokeWidth={1.5} />
+            </motion.div>
+          </div>
+          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-amber-300">Triply route lab</p>
+          <h1 className="mt-4 text-4xl font-bold tracking-tight text-white sm:text-6xl">Finding the shape of your day.</h1>
+          <p className="mx-auto mt-6 max-w-lg text-base leading-7 text-slate-300 sm:text-lg">
+            We are connecting your starting point, the places worth lingering at, and the best way home into one thoughtful route.
+          </p>
+          <div className="mx-auto mt-10 flex max-w-sm items-center gap-3 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
+            <motion.span className="h-px flex-1 bg-cyan-300/40" animate={{ opacity: [0.25, 1, 0.25] }} transition={{ duration: 1.2, repeat: Infinity }} />
+            <span>Searching real places</span>
+            <motion.span className="h-px flex-1 bg-amber-300/40" animate={{ opacity: [1, 0.25, 1] }} transition={{ duration: 1.2, repeat: Infinity }} />
+          </div>
+        </motion.section>
+      </main>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-transparent text-slate-200 font-sans relative overflow-x-hidden pb-20">{isLogoutPromptOpen && <div className="fixed inset-0 z-40 grid place-items-center bg-slate-950/80 px-6 backdrop-blur-md"><motion.div role="dialog" aria-modal="true" aria-labelledby="logout-title" initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} transition={{ duration: 0.25 }} className="w-full max-w-md rounded-3xl border border-white/15 bg-slate-950 p-7 text-center shadow-2xl"><motion.div initial={{ rotate: -8, scale: 0.8 }} animate={{ rotate: 0, scale: 1 }} transition={{ type: "spring" }}><LogOut className="mx-auto text-amber-300" size={34} /></motion.div><h2 id="logout-title" className="mt-5 text-2xl font-semibold text-white">Are you sure you want to sign out?</h2><p className="mt-3 text-sm leading-6 text-slate-400">Your current session will be cleared from this device.</p><div className="mt-7 flex justify-center gap-3"><button type="button" onClick={() => setIsLogoutPromptOpen(false)} className="rounded-full border border-white/15 px-5 py-3 text-sm text-slate-300 transition-colors hover:border-white/35 hover:text-white">Stay signed in</button><button type="button" onClick={confirmSignOut} className="rounded-full bg-rose-400 px-5 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-rose-300">Sign out</button></div></motion.div></div>}{isSignedOut && <div className="fixed inset-0 z-30 grid place-items-center bg-slate-950/85 px-6 backdrop-blur-md"><motion.div initial={{ opacity: 0, scale: 0.85, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }} className="text-center"><CheckCircle2 className="mx-auto text-cyan-300" size={64} strokeWidth={1.5} /><p className="mt-6 text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Session ended</p><h2 className="mt-3 text-3xl font-semibold text-white">You're signed out.</h2></motion.div></div>}
       <AnimatedMapBackground />
