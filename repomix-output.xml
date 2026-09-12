@@ -1,0 +1,3268 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+backend/
+  app/
+    api/
+      endpoints/
+        __init__.py
+        auth.py
+        health.py
+        routes.py
+        users.py
+      __init__.py
+      deps.py
+      router.py
+    core/
+      __init__.py
+      config.py
+      database.py
+      security.py
+    models/
+      __init__.py
+      route.py
+      user.py
+    schemas/
+      __init__.py
+      auth.py
+      route.py
+      token.py
+      user.py
+    services/
+      __init__.py
+      itinerary.py
+      open_data.py
+      otp.py
+      route.py
+      user.py
+    __init__.py
+    __pycache__.zip
+  .env
+  .env.example
+  main.py
+  requirements.txt
+  route_maker.db
+frontend/
+  app/
+    auth/
+      page.tsx
+    components/
+      shared/
+        AnimatedMap.tsx
+        TriplyLogo.tsx
+      ui/
+        RouteResults.tsx
+        TravelDashboard.tsx
+    routes/
+      history/
+        page.tsx
+    settings/
+      page.tsx
+    signup/
+      page.tsx
+    favicon.ico
+    globals.css
+    layout.tsx
+    page.tsx
+  public/
+    file.svg
+    globe.svg
+    next.svg
+    vercel.svg
+    window.svg
+  types/
+    html2pdf.d.ts
+  .gitignore
+  AGENTS.md
+  CLAUDE.md
+  eslint.config.mjs
+  next.config.ts
+  package.json
+  postcss.config.mjs
+  README.md
+  tailwind.config.js
+  tsconfig.json
+.gitignore
+l.exe -d Ubuntu -- echo route-maker-check
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="backend/app/api/endpoints/__init__.py">
+
+</file>
+
+<file path="backend/app/api/endpoints/health.py">
+from fastapi import APIRouter
+router = APIRouter()
+
+@router.get("/health")
+def health_check():
+    """
+    Checks the server status.
+    Returns 200 OK if everything is working correctly.
+    """
+    return {"status": "ok", "message": "The Route Maker API is working perfectly!"}
+</file>
+
+<file path="backend/app/api/__init__.py">
+
+</file>
+
+<file path="backend/app/core/__init__.py">
+
+</file>
+
+<file path="backend/app/core/database.py">
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+from app.core.config import settings
+
+engine = create_engine(
+    settings.DATABASE_URL, connect_args={"check_same_thread": False}
+)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+</file>
+
+<file path="backend/app/models/__init__.py">
+
+</file>
+
+<file path="backend/app/schemas/__init__.py">
+
+</file>
+
+<file path="backend/app/schemas/token.py">
+from pydantic import BaseModel
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenPayload(BaseModel):
+    sub: str | None = None
+</file>
+
+<file path="backend/app/services/__init__.py">
+
+</file>
+
+<file path="backend/app/services/open_data.py">
+from __future__ import annotations
+
+from math import cos, radians
+from typing import Iterable
+
+import requests
+
+from app.schemas.route import LocationInput, PointOfInterest
+from app.services.itinerary import haversine_km, normalize
+
+OVERPASS_ENDPOINTS = (
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+)
+OSRM_ENDPOINT = "https://router.project-osrm.org/route/v1"
+OSM_TIMEOUT_SECONDS = 20
+
+TAG_TO_CATEGORY = {
+    "museum": "culture",
+    "attraction": "attraction",
+    "historic": "historical",
+    "cafe": "cafe",
+    "restaurant": "dining",
+}
+
+
+def _center(plans: Iterable[tuple[int, LocationInput, LocationInput]]) -> LocationInput:
+    locations = [location for _, start, final in plans for location in (start, final)]
+    return LocationInput(
+        name="route center",
+        latitude=sum(location.latitude for location in locations) / len(locations),
+        longitude=sum(location.longitude for location in locations) / len(locations),
+    )
+
+
+def _query(center: LocationInput) -> dict:
+    lat_delta = 15 / 111
+    lon_delta = 15 / max(111 * 0.25, 111 * abs(cos(radians(center.latitude))))
+    south, west = center.latitude - lat_delta, center.longitude - lon_delta
+    north, east = center.latitude + lat_delta, center.longitude + lon_delta
+    # These are the only OSM tags accepted by the planner. No generic business query exists.
+    query = f"""[out:json][timeout:20];
+(
+  nwr["tourism"="museum"]({south},{west},{north},{east});
+  nwr["tourism"="attraction"]({south},{west},{north},{east});
+  nwr["historic"]({south},{west},{north},{east});
+  nwr["amenity"="cafe"]({south},{west},{north},{east});
+  nwr["amenity"="restaurant"]({south},{west},{north},{east});
+);
+out center tags;"""
+    last_error: Exception | None = None
+    for endpoint in OVERPASS_ENDPOINTS:
+        try:
+            response = requests.post(endpoint, data={"data": query}, timeout=OSM_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            return response.json()
+        except (requests.RequestException, ValueError) as error:
+            last_error = error
+    raise RuntimeError("Overpass is unavailable") from last_error
+
+
+def fetch_pois(plans: Iterable[tuple[int, LocationInput, LocationInput]]) -> list[PointOfInterest]:
+    plan_list = list(plans)
+    center = _center(plan_list)
+    data = _query(center)
+    pois: list[PointOfInterest] = []
+    seen: set[str] = set()
+    for element in data.get("elements", []):
+        tags = element.get("tags", {})
+        name = tags.get("name")
+        latitude = element.get("lat", element.get("center", {}).get("lat"))
+        longitude = element.get("lon", element.get("center", {}).get("lon"))
+        if not name or latitude is None or longitude is None:
+            continue
+        osm_type = tags.get("tourism") or tags.get("amenity") or ("historic" if "historic" in tags else "")
+        category = TAG_TO_CATEGORY.get(osm_type)
+        if not category:
+            continue
+        key = normalize(name)
+        if key in seen:
+            continue
+        seen.add(key)
+        significant = bool(tags.get("wikipedia") or tags.get("wikidata"))
+        pois.append(PointOfInterest(
+            name=name,
+            category=category,
+            place_types=[osm_type],
+            latitude=float(latitude),
+            longitude=float(longitude),
+            rating=4.8 if significant else 0,
+            review_count=100000 if significant else 0,
+            popularity_score=1 if significant else 0,
+            cuisine_types=[value.strip() for value in tags.get("cuisine", "").split(";") if value.strip()],
+            wheelchair_accessible=tags.get("wheelchair") == "yes",
+            tags=list(tags.values()),
+            required=False,
+        ))
+    return pois
+
+
+def osrm_duration_minutes(first, second, mode: str, fallback_wait: int = 0) -> int:
+    profile = "driving" if mode == "driving" else "foot"
+    coordinates = f"{first.longitude},{first.latitude};{second.longitude},{second.latitude}"
+    try:
+        response = requests.get(f"{OSRM_ENDPOINT}/{profile}/{coordinates}", params={"overview": "false"}, timeout=10)
+        response.raise_for_status()
+        seconds = response.json()["routes"][0]["duration"]
+        return max(1, round(seconds / 60))
+    except (requests.RequestException, KeyError, IndexError, TypeError, ValueError):
+        distance = haversine_km(first, second)
+        speed = 35 if mode == "driving" else 4.5
+        return max(5, round(distance / speed * 60)) + (fallback_wait if mode == "transit" else 0)
+</file>
+
+<file path="backend/app/services/otp.py">
+from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
+import hashlib
+import logging
+import secrets
+import smtplib
+from uuid import uuid4
+
+from sqlalchemy.orm import Session
+
+from app.core.config import settings
+from app.models.user import AuthChallenge, User
+
+logger = logging.getLogger(__name__)
+
+
+def create_challenge(db: Session, user: User) -> tuple[AuthChallenge, str]:
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    challenge = AuthChallenge(
+        id=str(uuid4()),
+        user_id=user.id,
+        code_hash=hashlib.sha256(code.encode("ascii")).hexdigest(),
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=settings.OTP_EXPIRE_MINUTES),
+    )
+    db.add(challenge)
+    db.commit()
+    db.refresh(challenge)
+    return challenge, code
+
+
+def send_otp_email(user: User, code: str) -> None:
+    if settings.OTP_DELIVERY_MODE == "console":
+        logger.warning("OTP for %s (local development only): %s", user.email, code)
+        return
+    if not settings.SMTP_HOST:
+        raise RuntimeError("Configure SMTP_HOST or set OTP_DELIVERY_MODE=console for local development.")
+
+    message = EmailMessage()
+    message["Subject"] = "Your Route Maker verification code"
+    message["From"] = settings.SMTP_FROM_EMAIL
+    message["To"] = user.email
+    message.set_content(
+        f"Your verification code is {code}. It expires in {settings.OTP_EXPIRE_MINUTES} minutes."
+    )
+    try:
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as smtp:
+            if settings.SMTP_USE_TLS:
+                smtp.starttls()
+            if settings.SMTP_USERNAME and settings.SMTP_PASSWORD:
+                smtp.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+            smtp.send_message(message)
+    except OSError as error:
+        raise RuntimeError("The verification email could not be sent.") from error
+
+
+def verify_challenge(db: Session, challenge_id: str, code: str) -> User | None:
+    challenge = db.get(AuthChallenge, challenge_id)
+    now = datetime.now(timezone.utc)
+    expires_at = challenge.expires_at.replace(tzinfo=timezone.utc) if challenge and challenge.expires_at.tzinfo is None else challenge.expires_at if challenge else None
+    if not challenge or challenge.used or expires_at < now:
+        return None
+    if challenge.attempts >= settings.OTP_MAX_ATTEMPTS:
+        return None
+
+    challenge.attempts += 1
+    if not secrets.compare_digest(
+        challenge.code_hash, hashlib.sha256(code.encode("ascii")).hexdigest()
+    ):
+        db.commit()
+        return None
+
+    challenge.used = True
+    db.commit()
+    return db.get(User, challenge.user_id)
+</file>
+
+<file path="backend/app/__init__.py">
+
+</file>
+
+<file path="backend/.env">
+OTP_DELIVERY_MODE=console
+</file>
+
+<file path="backend/.env.example">
+# Local development: the OTP is printed in the backend terminal.
+OTP_DELIVERY_MODE=console
+
+# Production email delivery:
+# OTP_DELIVERY_MODE=smtp
+# SMTP_HOST=smtp.example.com
+# SMTP_PORT=587
+# SMTP_USERNAME=your-smtp-username
+# SMTP_PASSWORD=your-smtp-password
+# SMTP_FROM_EMAIL=no-reply@example.com
+# SMTP_USE_TLS=true
+</file>
+
+<file path="frontend/app/components/shared/TriplyLogo.tsx">
+import Link from "next/link";
+
+export default function TriplyLogo({ href = "/" }: { href?: string }) {
+  return (
+    <Link href={href} className="group flex items-center gap-3 text-sm font-semibold uppercase tracking-[0.24em] text-white">
+      <span className="grid size-9 place-items-center rounded-full border border-cyan-300/40 bg-cyan-300/10 text-cyan-200 transition-transform duration-300 group-hover:rotate-12">
+        <svg viewBox="0 0 24 24" aria-hidden="true" className="size-5 fill-none stroke-current" strokeWidth="1.8">
+          <circle cx="12" cy="12" r="8.5" />
+          <path d="M8.5 15.5 10.3 10l5.2-1.8-1.8 5.3-5.2 2Z" />
+          <circle cx="12" cy="12" r="1.2" className="fill-current stroke-none" />
+        </svg>
+      </span>
+      Triply
+    </Link>
+  );
+}
+</file>
+
+<file path="frontend/app/routes/history/page.tsx">
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { ArrowLeft, CalendarDays, Loader2, MapPinned, Route as RouteIcon } from "lucide-react";
+import RouteResults, { RouteData } from "../../components/ui/RouteResults";
+import TriplyLogo from "../../components/shared/TriplyLogo";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+type SavedRoute = {
+  id: number;
+  title: string;
+  city: string;
+  created_at: string;
+  payload: RouteData;
+};
+
+export default function RouteHistoryPage() {
+  const [routes, setRoutes] = useState<SavedRoute[]>([]);
+  const [selectedRoute, setSelectedRoute] = useState<RouteData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const token = localStorage.getItem("triply_token");
+    if (!token) {
+      window.location.assign("/auth");
+      return;
+    }
+    fetch(`${API_URL}/api/v1/routes/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Unable to load your saved routes.");
+        return response.json() as Promise<SavedRoute[]>;
+      })
+      .then(setRoutes)
+      .catch((requestError) => setError(requestError instanceof Error ? requestError.message : "Unable to load your saved routes."))
+      .finally(() => setIsLoading(false));
+  }, []);
+
+  if (selectedRoute) {
+    return <RouteResults route={selectedRoute} onBack={() => setSelectedRoute(null)} />;
+  }
+
+  return (
+    <main className="min-h-screen bg-[#040814] px-6 py-7 text-slate-200 lg:px-10">
+      <header className="mx-auto flex max-w-6xl items-center justify-between border-b border-white/10 pb-5">
+        <TriplyLogo />
+        <Link href="/" className="flex items-center gap-2 text-sm text-slate-300 transition-colors hover:text-cyan-200"><ArrowLeft size={16} /> Plan a route</Link>
+      </header>
+      <section className="mx-auto max-w-6xl py-12">
+        <div className="mb-10 flex items-end justify-between gap-5"><div><p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-300">Your library</p><h1 className="mt-3 text-4xl font-semibold text-white sm:text-5xl">My Routes</h1><p className="mt-4 max-w-xl text-slate-400">Your saved days, preserved exactly as planned.</p></div><RouteIcon className="hidden text-cyan-300 sm:block" size={34} /></div>
+        {isLoading && <div className="flex items-center gap-3 text-sm text-slate-400"><Loader2 className="animate-spin text-cyan-300" size={18} />Loading your routes...</div>}
+        {error && <p role="alert" className="border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{error}</p>}
+        {!isLoading && !error && routes.length === 0 && <div className="border border-dashed border-white/15 bg-slate-900/50 p-10 text-center"><MapPinned className="mx-auto text-cyan-300" size={30} /><h2 className="mt-4 text-xl font-semibold text-white">No saved routes yet</h2><p className="mt-2 text-sm text-slate-400">Build a route and use Save route to keep it here.</p><Link href="/" className="mt-6 inline-flex rounded-full bg-cyan-300 px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-cyan-200">Start planning</Link></div>}
+        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">{routes.map((route) => <button type="button" key={route.id} onClick={() => setSelectedRoute(route.payload)} className="group rounded-3xl border border-white/10 bg-slate-900/65 p-6 text-left shadow-xl backdrop-blur-xl transition-all hover:-translate-y-1 hover:border-cyan-300/50 hover:bg-slate-900/85"><div className="flex items-center justify-between text-xs uppercase tracking-[0.18em] text-cyan-300"><span>{route.city}</span><CalendarDays size={16} /></div><h2 className="mt-8 text-2xl font-semibold text-white group-hover:text-cyan-100">{route.title}</h2><p className="mt-4 text-sm text-slate-500">Saved {new Date(route.created_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}</p><span className="mt-8 block text-sm font-semibold text-amber-300">Open itinerary →</span></button>)}</div>
+      </section>
+    </main>
+  );
+}
+</file>
+
+<file path="frontend/app/settings/page.tsx">
+"use client";
+
+import { useEffect, useState } from "react";
+import { motion } from "framer-motion";
+import Link from "next/link";
+import { Bell, Check, ChevronLeft, Clock3, Eye, LockKeyhole, LogOut, Map, Moon, Save, SlidersHorizontal, UserRound } from "lucide-react";
+import TriplyLogo from "../components/shared/TriplyLogo";
+
+type Account = { name: string; email: string };
+type ToggleProps = { label: string; description: string; checked: boolean; onChange: (checked: boolean) => void; icon: typeof Bell };
+
+function Toggle({ label, description, checked, onChange, icon: Icon }: ToggleProps) {
+  return <label className="flex cursor-pointer items-center justify-between gap-4 border-b border-white/10 py-4 last:border-0"><span className="flex min-w-0 items-start gap-3"><Icon size={18} className="mt-0.5 shrink-0 text-cyan-300" /><span><span className="block text-sm font-medium text-white">{label}</span><span className="mt-1 block text-xs leading-5 text-slate-400">{description}</span></span></span><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="size-4 shrink-0 accent-cyan-300" /></label>;
+}
+
+export default function SettingsPage() {
+  const [account, setAccount] = useState<Account>({ name: "", email: "" });
+  const [saved, setSaved] = useState(false);
+  const [startTime, setStartTime] = useState("09:00");
+  const [endTime, setEndTime] = useState("17:00");
+  const [meals, setMeals] = useState(1);
+  const [emailUpdates, setEmailUpdates] = useState(true);
+  const [routeReminders, setRouteReminders] = useState(true);
+  const [reducedMotion, setReducedMotion] = useState(false);
+  const [privateRoutes, setPrivateRoutes] = useState(true);
+
+  useEffect(() => {
+    const storedAccount = localStorage.getItem("triply_user");
+    if (storedAccount) {
+      try { setAccount(JSON.parse(storedAccount)); } catch { localStorage.removeItem("triply_user"); }
+    }
+    const storedPreferences = localStorage.getItem("triply_preferences");
+    if (storedPreferences) {
+      try {
+        const preferences = JSON.parse(storedPreferences);
+        setStartTime(preferences.startTime ?? "09:00");
+        setEndTime(preferences.endTime ?? "17:00");
+        setMeals(preferences.meals ?? 1);
+        setEmailUpdates(preferences.emailUpdates ?? true);
+        setRouteReminders(preferences.routeReminders ?? true);
+        setReducedMotion(preferences.reducedMotion ?? false);
+        setPrivateRoutes(preferences.privateRoutes ?? true);
+      } catch { localStorage.removeItem("triply_preferences"); }
+    }
+  }, []);
+
+  const saveSettings = () => {
+    localStorage.setItem("triply_user", JSON.stringify(account));
+    localStorage.setItem("triply_preferences", JSON.stringify({ startTime, endTime, meals, emailUpdates, routeReminders, reducedMotion, privateRoutes }));
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 1800);
+  };
+
+  const signOut = () => {
+    localStorage.removeItem("triply_token");
+    localStorage.removeItem("triply_user");
+    window.location.assign("/auth");
+  };
+
+  return <main className="min-h-screen bg-[#040814] text-slate-200"><div className="mx-auto max-w-5xl px-6 py-7 lg:px-10"><header className="flex items-center justify-between rounded-full border border-white/10 bg-slate-950/70 px-4 py-3 shadow-2xl backdrop-blur-xl sm:px-5"><TriplyLogo /><Link href="/" className="flex items-center gap-2 text-sm text-slate-300 transition-colors hover:text-white"><ChevronLeft size={16} /> Back to planner</Link></header><motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="py-12"><p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-300">Your space</p><h1 className="mt-3 text-4xl font-semibold tracking-tight text-white sm:text-5xl">Account settings</h1><p className="mt-4 max-w-xl text-slate-400">Shape how Triply plans, remembers, and keeps your days moving.</p></motion.div><div className="grid gap-5 lg:grid-cols-[1.25fr_0.75fr]"><section className="space-y-5"><div className="rounded-3xl border border-white/10 bg-slate-900/65 p-6 shadow-xl backdrop-blur-xl"><div className="mb-5 flex items-center gap-3"><UserRound className="text-cyan-300" size={20} /><div><h2 className="font-semibold text-white">Profile</h2><p className="text-xs text-slate-400">The name shown in your planner.</p></div></div><label className="block text-sm text-slate-300">Display name<input value={account.name} onChange={(event) => setAccount({ ...account, name: event.target.value })} className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-white outline-none transition-colors focus:border-cyan-300" /></label><label className="mt-4 block text-sm text-slate-300">Email address<input value={account.email} readOnly className="mt-2 w-full rounded-2xl border border-white/5 bg-black/20 px-4 py-3 text-slate-500 outline-none" /></label></div><div className="rounded-3xl border border-white/10 bg-slate-900/65 p-6 shadow-xl backdrop-blur-xl"><div className="mb-5 flex items-center gap-3"><Clock3 className="text-amber-300" size={20} /><div><h2 className="font-semibold text-white">Planning defaults</h2><p className="text-xs text-slate-400">Used when you start a new route.</p></div></div><div className="grid gap-4 sm:grid-cols-2"><label className="text-sm text-slate-300">Day starts<input type="time" value={startTime} onChange={(event) => setStartTime(event.target.value)} className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-white outline-none focus:border-cyan-300" /></label><label className="text-sm text-slate-300">Day ends<input type="time" value={endTime} onChange={(event) => setEndTime(event.target.value)} className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-white outline-none focus:border-cyan-300" /></label></div><label className="mt-5 block text-sm text-slate-300">Meals per day<div className="mt-2 flex items-center gap-3"><button type="button" onClick={() => setMeals(Math.max(0, meals - 1))} className="grid size-10 place-items-center rounded-full border border-white/15 text-lg hover:border-cyan-300">-</button><span className="min-w-8 text-center font-semibold text-white">{meals}</span><button type="button" onClick={() => setMeals(Math.min(4, meals + 1))} className="grid size-10 place-items-center rounded-full border border-white/15 text-lg hover:border-cyan-300">+</button></div></label></div></section><aside className="space-y-5"><div className="rounded-3xl border border-white/10 bg-slate-900/65 p-6 shadow-xl backdrop-blur-xl"><div className="mb-2 flex items-center gap-3"><SlidersHorizontal className="text-cyan-300" size={20} /><h2 className="font-semibold text-white">Preferences</h2></div><Toggle label="Trip updates" description="Receive occasional planning ideas." checked={emailUpdates} onChange={setEmailUpdates} icon={Bell} /><Toggle label="Route reminders" description="Keep upcoming plans visible." checked={routeReminders} onChange={setRouteReminders} icon={Map} /><Toggle label="Reduce motion" description="Use calmer page transitions." checked={reducedMotion} onChange={setReducedMotion} icon={Eye} /><Toggle label="Private routes" description="Keep saved routes visible only to you." checked={privateRoutes} onChange={setPrivateRoutes} icon={LockKeyhole} /><div className="mt-4 flex items-center gap-2 text-xs text-slate-500"><Moon size={14} /> Dark appearance is active</div></div><div className="rounded-3xl border border-rose-300/15 bg-rose-950/20 p-6"><h2 className="font-semibold text-white">Session</h2><p className="mt-2 text-xs leading-5 text-slate-400">Sign out on this device and return to the login screen.</p><button type="button" onClick={signOut} className="mt-4 flex items-center gap-2 rounded-full border border-rose-300/30 px-4 py-2.5 text-sm text-rose-200 transition-colors hover:bg-rose-300/10"><LogOut size={15} /> Sign out</button></div></aside></div><div className="sticky bottom-5 mt-8 flex justify-end"><button type="button" onClick={saveSettings} className="flex items-center gap-2 rounded-full bg-cyan-300 px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_8px_30px_rgba(34,211,238,0.2)] transition-transform hover:-translate-y-0.5">{saved ? <Check size={17} /> : <Save size={17} />}{saved ? "Saved" : "Save changes"}</button></div></div></main>;
+}
+</file>
+
+<file path="frontend/public/file.svg">
+<svg fill="none" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path d="M14.5 13.5V5.41a1 1 0 0 0-.3-.7L9.8.29A1 1 0 0 0 9.08 0H1.5v13.5A2.5 2.5 0 0 0 4 16h8a2.5 2.5 0 0 0 2.5-2.5m-1.5 0v-7H8v-5H3v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1M9.5 5V2.12L12.38 5zM5.13 5h-.62v1.25h2.12V5zm-.62 3h7.12v1.25H4.5zm.62 3h-.62v1.25h7.12V11z" clip-rule="evenodd" fill="#666" fill-rule="evenodd"/></svg>
+</file>
+
+<file path="frontend/public/globe.svg">
+<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><g clip-path="url(#a)"><path fill-rule="evenodd" clip-rule="evenodd" d="M10.27 14.1a6.5 6.5 0 0 0 3.67-3.45q-1.24.21-2.7.34-.31 1.83-.97 3.1M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16m.48-1.52a7 7 0 0 1-.96 0H7.5a4 4 0 0 1-.84-1.32q-.38-.89-.63-2.08a40 40 0 0 0 3.92 0q-.25 1.2-.63 2.08a4 4 0 0 1-.84 1.31zm2.94-4.76q1.66-.15 2.95-.43a7 7 0 0 0 0-2.58q-1.3-.27-2.95-.43a18 18 0 0 1 0 3.44m-1.27-3.54a17 17 0 0 1 0 3.64 39 39 0 0 1-4.3 0 17 17 0 0 1 0-3.64 39 39 0 0 1 4.3 0m1.1-1.17q1.45.13 2.69.34a6.5 6.5 0 0 0-3.67-3.44q.65 1.26.98 3.1M8.48 1.5l.01.02q.41.37.84 1.31.38.89.63 2.08a40 40 0 0 0-3.92 0q.25-1.2.63-2.08a4 4 0 0 1 .85-1.32 7 7 0 0 1 .96 0m-2.75.4a6.5 6.5 0 0 0-3.67 3.44 29 29 0 0 1 2.7-.34q.31-1.83.97-3.1M4.58 6.28q-1.66.16-2.95.43a7 7 0 0 0 0 2.58q1.3.27 2.95.43a18 18 0 0 1 0-3.44m.17 4.71q-1.45-.12-2.69-.34a6.5 6.5 0 0 0 3.67 3.44q-.65-1.27-.98-3.1" fill="#666"/></g><defs><clipPath id="a"><path fill="#fff" d="M0 0h16v16H0z"/></clipPath></defs></svg>
+</file>
+
+<file path="frontend/public/next.svg">
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 394 80"><path fill="#000" d="M262 0h68.5v12.7h-27.2v66.6h-13.6V12.7H262V0ZM149 0v12.7H94v20.4h44.3v12.6H94v21h55v12.6H80.5V0h68.7zm34.3 0h-17.8l63.8 79.4h17.9l-32-39.7 32-39.6h-17.9l-23 28.6-23-28.6zm18.3 56.7-9-11-27.1 33.7h17.8l18.3-22.7z"/><path fill="#000" d="M81 79.3 17 0H0v79.3h13.6V17l50.2 62.3H81Zm252.6-.4c-1 0-1.8-.4-2.5-1s-1.1-1.6-1.1-2.6.3-1.8 1-2.5 1.6-1 2.6-1 1.8.3 2.5 1a3.4 3.4 0 0 1 .6 4.3 3.7 3.7 0 0 1-3 1.8zm23.2-33.5h6v23.3c0 2.1-.4 4-1.3 5.5a9.1 9.1 0 0 1-3.8 3.5c-1.6.8-3.5 1.3-5.7 1.3-2 0-3.7-.4-5.3-1s-2.8-1.8-3.7-3.2c-.9-1.3-1.4-3-1.4-5h6c.1.8.3 1.6.7 2.2s1 1.2 1.6 1.5c.7.4 1.5.5 2.4.5 1 0 1.8-.2 2.4-.6a4 4 0 0 0 1.6-1.8c.3-.8.5-1.8.5-3V45.5zm30.9 9.1a4.4 4.4 0 0 0-2-3.3 7.5 7.5 0 0 0-4.3-1.1c-1.3 0-2.4.2-3.3.5-.9.4-1.6 1-2 1.6a3.5 3.5 0 0 0-.3 4c.3.5.7.9 1.3 1.2l1.8 1 2 .5 3.2.8c1.3.3 2.5.7 3.7 1.2a13 13 0 0 1 3.2 1.8 8.1 8.1 0 0 1 3 6.5c0 2-.5 3.7-1.5 5.1a10 10 0 0 1-4.4 3.5c-1.8.8-4.1 1.2-6.8 1.2-2.6 0-4.9-.4-6.8-1.2-2-.8-3.4-2-4.5-3.5a10 10 0 0 1-1.7-5.6h6a5 5 0 0 0 3.5 4.6c1 .4 2.2.6 3.4.6 1.3 0 2.5-.2 3.5-.6 1-.4 1.8-1 2.4-1.7a4 4 0 0 0 .8-2.4c0-.9-.2-1.6-.7-2.2a11 11 0 0 0-2.1-1.4l-3.2-1-3.8-1c-2.8-.7-5-1.7-6.6-3.2a7.2 7.2 0 0 1-2.4-5.7 8 8 0 0 1 1.7-5 10 10 0 0 1 4.3-3.5c2-.8 4-1.2 6.4-1.2 2.3 0 4.4.4 6.2 1.2 1.8.8 3.2 2 4.3 3.4 1 1.4 1.5 3 1.5 5h-5.8z"/></svg>
+</file>
+
+<file path="frontend/public/vercel.svg">
+<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1155 1000"><path d="m577.3 0 577.4 1000H0z" fill="#fff"/></svg>
+</file>
+
+<file path="frontend/public/window.svg">
+<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill-rule="evenodd" clip-rule="evenodd" d="M1.5 2.5h13v10a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1zM0 1h16v11.5a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 0 12.5zm3.75 4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5M7 4.75a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0m1.75.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5" fill="#666"/></svg>
+</file>
+
+<file path="frontend/types/html2pdf.d.ts">
+declare module "html2pdf.js" {
+  type Html2PdfOptions = Record<string, unknown>;
+
+  type Html2PdfWorker = {
+    set(options: Html2PdfOptions): Html2PdfWorker;
+    from(element: HTMLElement): Html2PdfWorker;
+    save(): Promise<void>;
+  };
+
+  const html2pdf: () => Html2PdfWorker;
+  export default html2pdf;
+}
+</file>
+
+<file path="frontend/.gitignore">
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+</file>
+
+<file path="frontend/AGENTS.md">
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->
+</file>
+
+<file path="frontend/CLAUDE.md">
+@AGENTS.md
+</file>
+
+<file path="frontend/eslint.config.mjs">
+import { defineConfig, globalIgnores } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals";
+import nextTs from "eslint-config-next/typescript";
+
+const eslintConfig = defineConfig([
+  ...nextVitals,
+  ...nextTs,
+  // Override default ignores of eslint-config-next.
+  globalIgnores([
+    // Default ignores of eslint-config-next:
+    ".next/**",
+    "out/**",
+    "build/**",
+    "next-env.d.ts",
+  ]),
+]);
+
+export default eslintConfig;
+</file>
+
+<file path="frontend/next.config.ts">
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  /* config options here */
+};
+
+export default nextConfig;
+</file>
+
+<file path="frontend/README.md">
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+
+## Getting Started
+
+First, run the development server:
+
+```bash
+npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+
+## Learn More
+
+To learn more about Next.js, take a look at the following resources:
+
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+
+## Deploy on Vercel
+
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+</file>
+
+<file path="frontend/tailwind.config.js">
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: [
+    "./app/**/*.{js,ts,jsx,tsx,mdx}",
+    "./components/**/*.{js,ts,jsx,tsx,mdx}",
+  ],
+  theme: {
+    extend: {
+      animation: {
+        'spin-slow': 'spin 4s linear infinite',
+      }
+    },
+  },
+  plugins: [],
+}
+</file>
+
+<file path="frontend/tsconfig.json">
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts"
+  ],
+  "exclude": ["node_modules"]
+}
+</file>
+
+<file path=".gitignore">
+node_modules/\n.env\n__pycache__/\nvenv/
+</file>
+
+<file path="l.exe -d Ubuntu -- echo route-maker-check">
+[1mdiff --git a/backend/app/schemas/route.py b/backend/app/schemas/route.py[m
+[1mindex f85c951..ce88a32 100644[m
+[1m--- a/backend/app/schemas/route.py[m
+[1m+++ b/backend/app/schemas/route.py[m
+[36m@@ -21,6 +21,7 @@[m [mclass PointOfInterest(BaseModel):[m
+     cost: float = Field(default=0, ge=0)[m
+     duration_minutes: int = Field(default=90, ge=15, le=360)[m
+     rating: float = Field(default=0, ge=0, le=5)[m
+[32m+[m[32m    popularity_score: float = Field(default=0, ge=0)[m[41m[m
+     tags: List[str] = Field(default_factory=list)[m
+     near_transit: bool = False[m
+     transit_wait_minutes: int = Field(default=15, ge=0, le=120)[m
+[1mdiff --git a/backend/app/services/itinerary.py b/backend/app/services/itinerary.py[m
+[1mindex 1d4ec24..f6d4b6e 100644[m
+[1m--- a/backend/app/services/itinerary.py[m
+[1m+++ b/backend/app/services/itinerary.py[m
+[36m@@ -98,6 +98,21 @@[m [mdef category_score(poi: PointOfInterest, selected_categories: set[str], budget:[m
+     return score[m
+ [m
+ [m
+[32m+[m[32mdef popularity_sort_key([m[41m[m
+[32m+[m[32m    poi: PointOfInterest,[m[41m[m
+[32m+[m[32m    selected_categories: set[str],[m[41m[m
+[32m+[m[32m    budget: str,[m[41m[m
+[32m+[m[32m    transport: str,[m[41m[m
+[32m+[m[32m) -> tuple[float, float, float, str]:[m[41m[m
+[32m+[m[32m    """Rank eligible places by quality first, with stable contextual tie-breakers."""[m[41m[m
+[32m+[m[32m    return ([m[41m[m
+[32m+[m[32m        -poi.rating,[m[41m[m
+[32m+[m[32m        -poi.popularity_score,[m[41m[m
+[32m+[m[32m        -category_score(poi, selected_categories, budget, transport),[m[41m[m
+[32m+[m[32m        normalize(poi.name),[m[41m[m
+[32m+[m[32m    )[m[41m[m
+[32m+[m[41m[m
+[32m+[m[41m[m
+ def filter_pois(route: RouteCreate, rules: PlanningRules) -> list[PointOfInterest]:[m
+     selected_categories = canonical_categories(route.preferences.categories)[m
+     budget = route.preferences.budget[m
+[36m@@ -153,23 +168,21 @@[m [mdef generate_itineraries(route: RouteCreate) -> list[DailyItinerary]:[m
+     ][m
+     candidates = filter_pois(route.model_copy(update={"points_of_interest": [*route.points_of_interest, *explicit_stops]}), rules)[m
+     itineraries: list[DailyItinerary] = [][m
+[32m+[m[32m    selected_categories = canonical_categories(route.preferences.categories)[m[41m[m
+     unassigned = [poi for poi in candidates if "day " not in normalize(poi.category)][m
+[31m-    grouped: dict[str, list[PointOfInterest]] = {}[m
+[31m-    for poi in unassigned:[m
+[31m-        category = CATEGORY_ALIASES.get(normalize(poi.category), normalize(poi.category))[m
+[31m-        grouped.setdefault(category, []).append(poi)[m
+[31m-    interleaved: list[PointOfInterest] = [][m
+[31m-    while grouped:[m
+[31m-        for category in list(grouped):[m
+[31m-            interleaved.append(grouped[category].pop(0))[m
+[31m-            if not grouped[category]:[m
+[31m-                del grouped[category][m
+[31m-    # Give every day its own pool so the first day cannot consume the whole trip.[m
+[32m+[m[32m    ranked = sorted([m[41m[m
+[32m+[m[32m        unassigned,[m[41m[m
+[32m+[m[32m        key=lambda poi: popularity_sort_key([m[41m[m
+[32m+[m[32m            poi, selected_categories, route.preferences.budget, route.preferences.transport[m[41m[m
+[32m+[m[32m        ),[m[41m[m
+[32m+[m[32m    )[m[41m[m
+[32m+[m[32m    # Reserve only the globally highest-ranked candidates, then distribute them by day.[m[41m[m
+[32m+[m[32m    route_capacity = rules.max_stops * len(plans)[m[41m[m
+[32m+[m[32m    ranked = ranked[:route_capacity][m[41m[m
+     daily_pools: dict[int, list[PointOfInterest]] = {day: [] for day, _, _ in plans}[m
+[31m-    for index, poi in enumerate(interleaved):[m
+[32m+[m[32m    for index, poi in enumerate(ranked):[m[41m[m
+         day = plans[index % len(plans)][0][m
+         daily_pools[day].append(poi)[m
+[31m-    selected_categories = canonical_categories(route.preferences.categories)[m
+     daily_minutes = round(route.preferences.hours_per_day * 60)[m
+ [m
+     for day, start, final in plans:[m
+[36m@@ -181,16 +194,20 @@[m [mdef generate_itineraries(route: RouteCreate) -> list[DailyItinerary]:[m
+         day_candidates = [poi for poi in candidates if normalize(f"day {day}") in normalize(poi.category)][m
+         planning_pool = [*daily_pools[day], *day_candidates][m
+         nearby = planning_pool[:][m
+[31m-        nearby.sort(key=lambda poi: (-category_score(poi, selected_categories, route.preferences.budget, route.preferences.transport), haversine_km(start, poi)))[m
+[32m+[m[32m        nearby.sort(key=lambda poi: popularity_sort_key(poi, selected_categories, route.preferences.budget, route.preferences.transport))[m[41m[m
+ [m
+[31m-        category_counts: dict[str, int] = {}[m
+         meals_scheduled = 0[m
+         visit_count = 0[m
+         while nearby and visit_count < rules.max_stops:[m
+             eligible = [poi for poi in nearby if not (CATEGORY_ALIASES.get(normalize(poi.category), normalize(poi.category)) == "dining" and meals_scheduled >= route.preferences.meals_per_day)][m
+             if not eligible:[m
+                 break[m
+[31m-            next_poi = min(eligible, key=lambda poi: (category_counts.get(CATEGORY_ALIASES.get(normalize(poi.category), normalize(poi.category)), 0) if selected_categories else 0, -category_score(poi, selected_categories, route.preferences.budget, route.preferences.transport), haversine_km(current, poi)))[m
+[32m+[m[32m            next_poi = min([m[41m[m
+[32m+[m[32m                eligible,[m[41m[m
+[32m+[m[32m                key=lambda poi: popularity_sort_key([m[41m[m
+[32m+[m[32m                    poi, selected_categories, route.preferences.budget, route.preferences.transport[m[41m[m
+[32m+[m[32m                ),[m[41m[m
+[32m+[m[32m            )[m[41m[m
+             distance = haversine_km(current, next_poi)[m
+             move_minutes = travel_minutes(distance, route.preferences.transport, next_poi.transit_wait_minutes)[m
+             visit_minutes = min(next_poi.duration_minutes, rules.attraction_minutes)[m
+[36m@@ -206,7 +223,6 @@[m [mdef generate_itineraries(route: RouteCreate) -> list[DailyItinerary]:[m
+             used_minutes += move_minutes + visit_minutes[m
+             total_cost += next_poi.cost[m
+             canonical_category = CATEGORY_ALIASES.get(normalize(next_poi.category), normalize(next_poi.category))[m
+[31m-            category_counts[canonical_category] = category_counts.get(canonical_category, 0) + 1[m
+             visit_count += 1[m
+             if canonical_category == "dining":[m
+                 meals_scheduled += 1[m
+</file>
+
+<file path="backend/app/api/endpoints/users.py">
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.schemas.user import UserResponse
+from app.models.user import User
+from app.api.deps import get_current_user
+
+router = APIRouter()
+
+
+@router.get("/me", response_model=UserResponse)
+def get_current_user_profile(
+    current_user: User = Depends(get_current_user),
+) -> UserResponse:
+    """Return the current user's profile."""
+    return UserResponse.model_validate(current_user)
+</file>
+
+<file path="backend/app/api/deps.py">
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import jwt, JWTError
+from sqlalchemy.orm import Session
+from pydantic import ValidationError
+
+from app.core.config import settings
+from app.core.database import get_db
+from app.models.user import User
+from app.schemas.token import TokenPayload
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
+
+def get_current_user(
+    db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)
+) -> User:
+    try:
+        payload = jwt.decode(
+            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+        )
+        token_data = TokenPayload(**payload)
+    except (JWTError, ValidationError):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Could not validate credentials",
+        )
+    try:
+        user_id = int(token_data.sub or "")
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Could not validate credentials",
+        ) from None
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User account is inactive")
+    return user
+</file>
+
+<file path="backend/app/core/security.py">
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+import bcrypt
+from jose import jwt
+from app.core.config import settings
+
+MAX_BCRYPT_PASSWORD_BYTES = 72
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    password_bytes = plain_password.encode("utf-8")
+    if len(password_bytes) > MAX_BCRYPT_PASSWORD_BYTES:
+        return False
+    return bcrypt.checkpw(password_bytes, hashed_password.encode("utf-8"))
+
+def get_password_hash(password: str) -> str:
+    password_bytes = password.encode("utf-8")
+    if len(password_bytes) > MAX_BCRYPT_PASSWORD_BYTES:
+        raise ValueError("Password cannot be longer than 72 bytes.")
+    return bcrypt.hashpw(password_bytes, bcrypt.gensalt()).decode("utf-8")
+
+def create_access_token(subject: str | int, expires_delta: Optional[timedelta] = None) -> str:
+    if expires_delta:
+        expire = datetime.now(timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    
+    to_encode = {"exp": expire, "sub": str(subject)}
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+</file>
+
+<file path="backend/app/models/route.py">
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, JSON
+from sqlalchemy.orm import relationship
+from datetime import datetime, timezone
+
+from app.core.database import Base
+
+class Route(Base):
+    __tablename__ = "routes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    title = Column(String, nullable=False)
+    city = Column(String, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User", back_populates="routes")
+    waypoints = relationship("Waypoint", back_populates="route", cascade="all, delete-orphan")
+
+class Waypoint(Base):
+    __tablename__ = "waypoints"
+
+    id = Column(Integer, primary_key=True, index=True)
+    route_id = Column(Integer, ForeignKey("routes.id"), nullable=False)
+    name = Column(String, nullable=False)
+    category = Column(String) 
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    order_index = Column(Integer, nullable=False)
+
+    route = relationship("Route", back_populates="waypoints")
+
+
+class SavedRoute(Base):
+    __tablename__ = "saved_routes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    title = Column(String, nullable=False)
+    city = Column(String, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    payload = Column(JSON, nullable=False)
+
+    user = relationship("User", back_populates="saved_routes")
+</file>
+
+<file path="backend/app/schemas/auth.py">
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+from app.schemas.user import UserResponse
+
+
+class LoginRequest(BaseModel):
+    identifier: str = Field(min_length=2)
+    password: str
+
+
+class RegisterRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+    email: EmailStr
+    password: str = Field(min_length=8)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 2:
+            raise ValueError("Name must contain at least 2 characters.")
+        return value
+
+    @field_validator("email")
+    @classmethod
+    def reject_disposable_email(cls, value: EmailStr) -> EmailStr:
+        disposable_domains = {
+            "10minutemail.com", "guerrillamail.com", "mailinator.com", "sharklasers.com",
+            "tempmail.com", "temp-mail.org", "yopmail.com", "getnada.com", "throwaway.email",
+        }
+        domain = str(value).rsplit("@", 1)[-1].lower().rstrip(".")
+        if domain in disposable_domains:
+            raise ValueError("Temporary or disposable email addresses are not allowed.")
+        return value
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 72:
+            raise ValueError("Password cannot be longer than 72 bytes.")
+        requirements = (
+            (any(character.islower() for character in value), "a lowercase letter"),
+            (any(character.isupper() for character in value), "an uppercase letter"),
+            (any(character.isdigit() for character in value), "a number"),
+            (any(not character.isalnum() for character in value), "a special character"),
+        )
+        missing = [label for passed, label in requirements if not passed]
+        if missing:
+            raise ValueError(f"Password must contain {', '.join(missing)}.")
+        return value
+
+
+class AuthResponse(BaseModel):
+    access_token: str | None = None
+    token_type: str = "bearer"
+    user: UserResponse
+    requires_2fa: bool = True
+    challenge_id: str | None = None
+
+
+class VerifyOTPRequest(BaseModel):
+    challenge_id: str = Field(min_length=36, max_length=36)
+    code: str = Field(pattern=r"^\d{6}$")
+</file>
+
+<file path="backend/app/schemas/user.py">
+from pydantic import BaseModel, EmailStr, Field, field_validator
+from typing import Optional
+
+class UserBase(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+    email: EmailStr
+    walking_speed_kmh: Optional[float] = 4.5
+
+class UserCreate(UserBase):
+    password: str = Field(min_length=8)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 72:
+            raise ValueError("Password cannot be longer than 72 bytes.")
+        requirements = (
+            (any(character.islower() for character in value), "a lowercase letter"),
+            (any(character.isupper() for character in value), "an uppercase letter"),
+            (any(character.isdigit() for character in value), "a number"),
+            (any(not character.isalnum() for character in value), "a special character"),
+        )
+        missing = [label for passed, label in requirements if not passed]
+        if missing:
+            raise ValueError(f"Password must contain {', '.join(missing)}.")
+        return value
+
+class UserResponse(UserBase):
+    id: int
+    is_active: bool
+
+    class Config:
+        from_attributes = True
+</file>
+
+<file path="backend/app/services/itinerary.py">
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, time
+from math import asin, cos, radians, sin, sqrt
+from typing import Iterable
+
+from fastapi import HTTPException, status
+
+from app.schemas.route import (
+    DailyItinerary,
+    ItineraryWaypoint,
+    LocationInput,
+    PointOfInterest,
+    RouteCreate,
+    TransitLeg,
+)
+
+
+CATEGORY_ALIASES = {
+    "historical landmarks": "historical",
+    "arts & culture": "culture",
+    "local cafes": "cafe",
+    "fine dining": "dining",
+    "attractions": "attraction",
+    "historical": "historical",
+    "culture": "culture",
+    "cafe": "cafe",
+    "dining": "dining",
+    "parks & gardens": "park",
+    "public park": "park",
+    "viewpoints": "attraction",
+}
+SUPPORTED_CATEGORIES = {"historical", "culture", "cafe", "dining", "attraction", "park"}
+ALLOWED_PLACE_TYPES = {
+    "historical": {"museum", "tourist_attraction", "historical_landmark", "historic"},
+    "culture": {"museum", "art_gallery", "gallery", "tourist_attraction"},
+    "attraction": {"museum", "tourist_attraction", "historical_landmark", "viewpoint", "zoo", "theme_park"},
+    "cafe": {"cafe"},
+    "dining": {"restaurant", "cafe"},
+    "park": {"park", "garden"},
+}
+STATIC_DURATIONS = {"historical": 150, "culture": 150, "attraction": 120, "cafe": 60, "dining": 75, "park": 90}
+
+
+@dataclass(frozen=True)
+class PlanningRules:
+    max_stops: int
+    attraction_minutes: int
+    travel_factor: float
+    radius_km: float
+    buffer_minutes: int
+
+
+def normalize(value: str) -> str:
+    return " ".join(value.casefold().replace("_", " ").split())
+
+
+def rules_for(preferences) -> PlanningRules:
+    pacing = {normalize(tag) for tag in preferences.pacing_tags}
+    slow = "leisurely stroll" in pacing
+    dense = "action packed" in pacing
+    base_stops = 3 if slow else 6 if dense else 4
+    # A 10-hour dense day can contain ten visits plus its start and final anchors.
+    max_stops = min(20, max(base_stops, int(preferences.hours_per_day * 60 / 45)))
+    return PlanningRules(
+        max_stops=max_stops,
+        attraction_minutes=120 if slow or "leisurely stroll" in pacing else 45 if dense or "action packed" in pacing else 90,
+        travel_factor=1.3 if preferences.transport == "walking" else 1.0,
+        radius_km=3.0 if preferences.transport == "walking" else 8.0 if preferences.transport == "public transport" else 30.0,
+        buffer_minutes=max(90 if slow else 30, preferences.start_buffer_minutes + preferences.end_buffer_minutes),
+    )
+
+
+def haversine_km(first: LocationInput | PointOfInterest, second: LocationInput | PointOfInterest) -> float:
+    latitude_delta = radians(second.latitude - first.latitude)
+    longitude_delta = radians(second.longitude - first.longitude)
+    first_latitude = radians(first.latitude)
+    second_latitude = radians(second.latitude)
+    value = sin(latitude_delta / 2) ** 2 + cos(first_latitude) * cos(second_latitude) * sin(longitude_delta / 2) ** 2
+    return 6371 * 2 * asin(sqrt(value))
+
+
+def canonical_categories(categories: Iterable[str]) -> set[str]:
+    return {canonical for category in categories if (canonical := CATEGORY_ALIASES.get(normalize(category), normalize(category))) in SUPPORTED_CATEGORIES}
+
+
+def budget_matches(poi: PointOfInterest, budget: float) -> bool:
+    return poi.cost <= float(budget)
+
+
+def cuisine_matches(poi: PointOfInterest, cuisines: Iterable[str]) -> bool:
+    requested = {normalize(cuisine) for cuisine in cuisines if normalize(cuisine)}
+    if not requested or CATEGORY_ALIASES.get(normalize(poi.category), normalize(poi.category)) != "dining":
+        return True
+    available = {normalize(cuisine) for cuisine in [*poi.cuisine_types, *poi.tags]}
+    return any(requested_cuisine in available or any(requested_cuisine in value for value in available) for requested_cuisine in requested)
+
+
+def dining_budget_matches(poi: PointOfInterest, preferences) -> bool:
+    if CATEGORY_ALIASES.get(normalize(poi.category), normalize(poi.category)) != "dining" or preferences.dining_budget is None:
+        return True
+    return poi.cost * preferences.party_size <= preferences.dining_budget
+
+
+def category_score(poi: PointOfInterest, selected_categories: set[str], budget: float, transport: str) -> float:
+    score = poi.rating * 2
+    if selected_categories and CATEGORY_ALIASES.get(normalize(poi.category), normalize(poi.category)) in selected_categories:
+        score += 8
+    if poi.cost <= budget:
+        score += 2
+    if transport == "public transport" and poi.near_transit:
+        score += 4
+    return score
+
+
+def canonical_place_types(poi: PointOfInterest) -> set[str]:
+    category = CATEGORY_ALIASES.get(normalize(poi.category), normalize(poi.category))
+    return {normalize(value) for value in poi.place_types} if poi.place_types else ALLOWED_PLACE_TYPES.get(category, set())
+
+
+def allowed_for_category(poi: PointOfInterest, category: str) -> bool:
+    return bool(canonical_place_types(poi) & ALLOWED_PLACE_TYPES.get(category, set()))
+
+
+def static_duration(poi: PointOfInterest) -> int:
+    category = CATEGORY_ALIASES.get(normalize(poi.category), normalize(poi.category))
+    return STATIC_DURATIONS.get(category, 90)
+
+
+def popularity_sort_key(
+    poi: PointOfInterest,
+    selected_categories: set[str],
+    budget: float,
+    transport: str,
+) -> tuple[float, float, float, float, float, str]:
+    """Rank eligible places by quality first, with stable contextual tie-breakers."""
+    return (
+        -float(poi.rating > 4.5),
+        -poi.rating,
+        -poi.review_count,
+        -poi.popularity_score,
+        -category_score(poi, selected_categories, budget, transport),
+        normalize(poi.name),
+    )
+
+
+def filter_pois(route: RouteCreate, rules: PlanningRules) -> list[PointOfInterest]:
+    selected_categories = canonical_categories(route.preferences.categories)
+    budget = route.preferences.budget
+    scoped_cities = {normalize(city) for city in route.cities}
+    start_locations = [location for plan in route.daily_plans for location in (plan.start, plan.final_destination)]
+    if not start_locations and route.waypoints:
+        start_locations = [LocationInput(name=route.waypoints[0].name, latitude=route.waypoints[0].latitude, longitude=route.waypoints[0].longitude)]
+    candidates = []
+    for poi in route.points_of_interest:
+        poi_category = CATEGORY_ALIASES.get(normalize(poi.category), normalize(poi.category))
+        city_matches = not scoped_cities or poi.city is None or normalize(poi.city) in scoped_cities or any(city in normalize(" ".join(poi.tags + [poi.name])) for city in scoped_cities)
+        category_matches = poi.required or not selected_categories or poi_category in selected_categories
+        type_matches = poi.required or any(allowed_for_category(poi, selected) for selected in (selected_categories or {poi_category}))
+        within_walking_limit = (
+            not start_locations
+            or route.preferences.transport != "walking"
+            or any(haversine_km(start, poi) <= route.preferences.max_walking_distance_km for start in start_locations)
+        )
+        if not within_walking_limit and not poi.required:
+            continue
+        if route.preferences.accessibility_required and not poi.wheelchair_accessible and not poi.required:
+            continue
+        within_radius = not start_locations or any(haversine_km(start, poi) <= 15 for start in start_locations)
+        if city_matches and category_matches and type_matches and within_radius and (poi.required or budget_matches(poi, budget)) and cuisine_matches(poi, route.preferences.cuisine_types) and dining_budget_matches(poi, route.preferences):
+            candidates.append(poi)
+    return candidates
+
+
+def travel_minutes(distance_km: float, transport: str, transit_wait_minutes: int = 0) -> int:
+    speed_kmh = {"walking": 4.5, "public transport": 20.0, "by car": 35.0}.get(transport, 4.5)
+    travel = max(5, round(distance_km / speed_kmh * 60))
+    return travel + transit_wait_minutes if transport == "public transport" else travel
+
+
+def transit_to_next(current, next_location, allowed_transport: str, wait_minutes: int = 0) -> TransitLeg:
+    from app.services.open_data import osrm_duration_minutes
+
+    distance = haversine_km(current, next_location)
+    if distance < 0.01:
+        return TransitLeg(transit_mode="stationary", travel_duration_minutes=0)
+    walking = osrm_duration_minutes(current, next_location, "walking")
+    transit = travel_minutes(distance, "public transport", wait_minutes)
+    driving = osrm_duration_minutes(current, next_location, "driving")
+    if allowed_transport == "by car":
+        mode, duration = ("driving", driving) if driving <= transit else ("transit", transit)
+    elif allowed_transport == "public transport":
+        mode, duration = "transit", transit
+    else:
+        mode, duration = "walking", walking
+    return TransitLeg(transit_mode=mode, travel_duration_minutes=duration)
+
+
+def make_waypoint(location: LocationInput, category: str, day: int, order_index: int, duration: int = 0, cost: float = 0, travel: int = 0) -> ItineraryWaypoint:
+    return ItineraryWaypoint(name=location.name, category=category, latitude=location.latitude, longitude=location.longitude, order_index=order_index, day=day, duration_minutes=duration, estimated_cost=cost, travel_minutes_from_previous=travel)
+
+
+def make_poi_waypoint(poi: PointOfInterest, day: int, order_index: int, travel: int, duration: int) -> ItineraryWaypoint:
+    return ItineraryWaypoint(name=poi.name, category=poi.category, latitude=poi.latitude, longitude=poi.longitude, order_index=order_index, day=day, duration_minutes=duration, estimated_cost=poi.cost, travel_minutes_from_previous=travel)
+
+
+def daily_plans_for(route: RouteCreate) -> list[tuple[int, LocationInput, LocationInput]]:
+    if route.daily_plans:
+        return [(plan.day, plan.start, plan.final_destination) for plan in sorted(route.daily_plans, key=lambda plan: plan.day)]
+    if len(route.waypoints) < 2:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Provide a start and final destination for every day.")
+    first = route.waypoints[0]
+    last = route.waypoints[-1]
+    start = LocationInput(name=first.name, latitude=first.latitude, longitude=first.longitude)
+    final = LocationInput(name=last.name, latitude=last.latitude, longitude=last.longitude)
+    return [(1, start, final)]
+
+
+def inject_parking(current: PointOfInterest, day: int, order_index: int, travel: int = 0) -> ItineraryWaypoint:
+    return ItineraryWaypoint(name=f"Public Parking / Garage near {current.name}", category="Public Parking / Garage", latitude=current.latitude, longitude=current.longitude, order_index=order_index, day=day, duration_minutes=15, estimated_cost=0, travel_minutes_from_previous=travel)
+
+
+def apply_schedule(
+    start: ItineraryWaypoint,
+    stops: list[ItineraryWaypoint],
+    final_destination: ItineraryWaypoint,
+    start_time: time,
+) -> None:
+    """Advance a day clock through travel and visit durations."""
+    clock = datetime.combine(date(2000, 1, 1), start_time)
+    waypoints = [start, *stops, final_destination]
+    for index, waypoint in enumerate(waypoints):
+        if index:
+            clock += timedelta(minutes=waypoint.travel_minutes_from_previous)
+        arrival = clock
+        departure = arrival + timedelta(minutes=waypoint.duration_minutes)
+        waypoint.arrival_time = arrival.time()
+        waypoint.departure_time = departure.time()
+        waypoint.schedule_label = f"{arrival.strftime('%I:%M %p')} - {departure.strftime('%I:%M %p')}: {waypoint.name}"
+        clock = departure
+
+
+def generate_itineraries(route: RouteCreate) -> list[DailyItinerary]:
+    from app.services.open_data import fetch_pois
+
+    rules = rules_for(route.preferences)
+    plans = daily_plans_for(route)
+    explicit_anchors = {normalize(location.name) for _, start, final in plans for location in (start, final)}
+    explicit_stops = [
+        PointOfInterest(name=waypoint.name, category=waypoint.category, latitude=waypoint.latitude, longitude=waypoint.longitude, required=True)
+        for waypoint in route.waypoints
+        if normalize(waypoint.name) not in explicit_anchors
+    ]
+    try:
+        discovered_pois = fetch_pois(plans)
+    except RuntimeError:
+        discovered_pois = []
+    source_pois = discovered_pois or route.points_of_interest
+    candidates = filter_pois(route.model_copy(update={"points_of_interest": [*source_pois, *explicit_stops]}), rules)
+    itineraries: list[DailyItinerary] = []
+    selected_categories = canonical_categories(route.preferences.categories)
+    unassigned = [poi for poi in candidates if "day " not in normalize(poi.category)]
+    ranked = sorted(
+        unassigned,
+        key=lambda poi: popularity_sort_key(
+            poi, selected_categories, route.preferences.budget, route.preferences.transport
+        ),
+    )
+    dining_ranked = [
+        poi for poi in ranked
+        if CATEGORY_ALIASES.get(normalize(poi.category), normalize(poi.category)) == "dining"
+    ]
+    non_dining_ranked = [
+        poi for poi in ranked
+        if CATEGORY_ALIASES.get(normalize(poi.category), normalize(poi.category)) != "dining"
+    ]
+    dining_reserved = dining_ranked[: route.preferences.meals_per_day * len(plans)]
+    # Reserve matching meals first, then fill remaining capacity with top attractions.
+    route_capacity = rules.max_stops * len(plans)
+    ranked = [*dining_reserved, *non_dining_ranked][:route_capacity]
+    daily_pools: dict[int, list[PointOfInterest]] = {day: [] for day, _, _ in plans}
+    for index, poi in enumerate(ranked):
+        day = plans[index % len(plans)][0]
+        daily_pools[day].append(poi)
+    daily_minutes = round(route.preferences.hours_per_day * 60)
+
+    for day, start, final in plans:
+        current: LocationInput | PointOfInterest = start
+        stops: list[ItineraryWaypoint] = []
+        used_minutes = 0
+        total_cost = 0.0
+        order_index = 1
+        day_candidates = [poi for poi in candidates if normalize(f"day {day}") in normalize(poi.category)]
+        planning_pool = [*daily_pools[day], *day_candidates]
+        nearby = planning_pool[:]
+        nearby.sort(key=lambda poi: popularity_sort_key(poi, selected_categories, route.preferences.budget, route.preferences.transport))
+
+        meals_scheduled = 0
+        visit_count = 0
+        while nearby and visit_count < rules.max_stops:
+            eligible = [poi for poi in nearby if not (CATEGORY_ALIASES.get(normalize(poi.category), normalize(poi.category)) == "dining" and meals_scheduled >= route.preferences.meals_per_day)]
+            if not eligible:
+                break
+            dining_candidates = [poi for poi in eligible if CATEGORY_ALIASES.get(normalize(poi.category), normalize(poi.category)) == "dining"]
+            non_dining_candidates = [poi for poi in eligible if CATEGORY_ALIASES.get(normalize(poi.category), normalize(poi.category)) != "dining"]
+            meal_targets = [daily_minutes * 0.5] if route.preferences.meals_per_day == 1 else [daily_minutes * 0.35, daily_minutes * 0.72]
+            meal_target = meal_targets[min(meals_scheduled, len(meal_targets) - 1)] if meal_targets else daily_minutes * 0.5
+            meal_is_due = dining_candidates and used_minutes >= meal_target - 45
+            if meal_is_due:
+                eligible = dining_candidates
+            elif non_dining_candidates:
+                eligible = non_dining_candidates
+            next_poi = min(
+                eligible,
+                key=lambda poi: (
+                    abs(used_minutes - meal_target),
+                    *popularity_sort_key(poi, selected_categories, route.preferences.budget, route.preferences.transport),
+                ) if CATEGORY_ALIASES.get(normalize(poi.category), normalize(poi.category)) == "dining" and meal_is_due else popularity_sort_key(poi, selected_categories, route.preferences.budget, route.preferences.transport),
+            )
+            leg = transit_to_next(current, next_poi, route.preferences.transport, next_poi.transit_wait_minutes)
+            move_minutes = leg.travel_duration_minutes
+            visit_minutes = static_duration(next_poi)
+            # Required user-selected stops are always included; optional POIs must fit the time budget.
+            final_leg_minutes = transit_to_next(next_poi, final, route.preferences.transport).travel_duration_minutes
+            if not next_poi.required and used_minutes + move_minutes + visit_minutes + final_leg_minutes > daily_minutes:
+                nearby.remove(next_poi)
+                continue
+            if route.preferences.transport == "by car" and CATEGORY_ALIASES.get(normalize(next_poi.category), normalize(next_poi.category)) in {"historical", "attraction", "culture", "park"}:
+                stops.append(inject_parking(next_poi, day, order_index, move_minutes))
+                order_index += 1
+                move_minutes = 0
+            stops.append(make_poi_waypoint(next_poi, day, order_index, move_minutes, visit_minutes))
+            order_index += 1
+            used_minutes += move_minutes + visit_minutes
+            total_cost += next_poi.cost
+            canonical_category = CATEGORY_ALIASES.get(normalize(next_poi.category), normalize(next_poi.category))
+            visit_count += 1
+            if canonical_category == "dining":
+                meals_scheduled += 1
+            current = next_poi
+            nearby.remove(next_poi)
+
+        final_leg = transit_to_next(current, final, route.preferences.transport)
+        final_travel = final_leg.travel_duration_minutes
+        used_minutes += final_travel
+        start_waypoint = make_waypoint(start, f"Day {day} · Start", day, 0)
+        final_waypoint = make_waypoint(final, f"Day {day} · Final destination", day, order_index, travel=final_travel)
+        scheduled_waypoints = [start_waypoint, *stops, final_waypoint]
+        for index, waypoint in enumerate(scheduled_waypoints[:-1]):
+            next_waypoint = scheduled_waypoints[index + 1]
+            waypoint.transit_to_next = transit_to_next(waypoint, next_waypoint, route.preferences.transport, next_waypoint.travel_minutes_from_previous)
+        apply_schedule(start_waypoint, stops, final_waypoint, route.preferences.start_time)
+        itineraries.append(DailyItinerary(day=day, start=start_waypoint, stops=stops, final_destination=final_waypoint, total_cost=round(total_cost, 2), scheduled_minutes=used_minutes, buffer_minutes=max(0, daily_minutes - used_minutes)))
+    return itineraries
+
+
+def flatten_itineraries(itineraries: list[DailyItinerary]):
+    flattened = []
+    for itinerary in itineraries:
+        flattened.extend([itinerary.start, *itinerary.stops, itinerary.final_destination])
+    return flattened
+</file>
+
+<file path="frontend/app/components/shared/AnimatedMap.tsx">
+"use client";
+
+import React, { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import { Map as MapIcon } from 'lucide-react';
+
+export default function AnimatedMap() {
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  if (!isMounted) {
+    return <div className="fixed inset-0 overflow-hidden bg-[#07110f] pointer-events-none z-0" />;
+  }
+
+  return (
+    <div className="fixed inset-0 overflow-hidden bg-[#07110f] pointer-events-none z-0">
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,#24463b_1px,transparent_1px),linear-gradient(to_bottom,#24463b_1px,transparent_1px)] bg-[size:4rem_4rem] opacity-35" />
+      
+      <svg className="absolute inset-0 w-full h-full opacity-40">
+        <motion.path
+          d="M-100,600 C200,500 300,700 600,300 S1000,500 1400,200"
+          fill="none" stroke="#f08a68" strokeWidth="2" strokeDasharray="10 10"
+          initial={{ pathLength: 0, opacity: 0 }}
+          animate={{ pathLength: 1, opacity: 1 }}
+          transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
+        />
+        <motion.path
+          d="M1400,800 C1100,700 900,900 600,600 S200,700 -100,400"
+          fill="none" stroke="#6fae91" strokeWidth="1.5" strokeDasharray="5 15"
+          initial={{ pathLength: 0, opacity: 0 }}
+          animate={{ pathLength: 1, opacity: 0.5 }}
+          transition={{ duration: 12, repeat: Infinity, ease: "linear" }}
+        />
+      </svg>
+
+      {[...Array(6)].map((_, i) => (
+        <motion.div
+          key={`marker-${i}`}
+          className="absolute text-[#6fae91]/30"
+          style={{ left: `${Math.random() * 100}%`, top: `${Math.random() * 100}%` }}
+          animate={{ y: [0, -30, 0], opacity: [0.2, 0.8, 0.2], scale: [1, 1.2, 1] }}
+          transition={{ duration: 4 + Math.random() * 3, repeat: Infinity, ease: "easeInOut" }}
+        >
+          <div className="relative">
+            <MapIcon size={48} strokeWidth={1} />
+            <div className="absolute inset-0 bg-[#f08a68]/15 blur-xl rounded-full" />
+          </div>
+        </motion.div>
+      ))}
+      
+    </div>
+  );
+}
+</file>
+
+<file path="frontend/app/signup/page.tsx">
+"use client";
+
+import Link from "next/link";
+import { FormEvent, useState } from "react";
+import { motion } from "framer-motion";
+import { ArrowRight, Check, CheckCircle2, LockKeyhole, UserRound, X } from "lucide-react";
+import AnimatedMap from "../components/shared/AnimatedMap";
+import TriplyLogo from "../components/shared/TriplyLogo";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const rules = [
+  { label: "At least 8 characters", test: (value: string) => value.length >= 8 },
+  { label: "A letter", test: (value: string) => /[a-z]/i.test(value) },
+  { label: "A capital letter", test: (value: string) => /[A-Z]/.test(value) },
+  { label: "A number", test: (value: string) => /\d/.test(value) },
+  { label: "A special character", test: (value: string) => /[^A-Za-z0-9]/.test(value) },
+];
+
+export default function SignupPage() {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [challengeId, setChallengeId] = useState<string | null>(null);
+  const [otp, setOtp] = useState("");
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const name = String(form.get("name") ?? "").trim();
+    const email = String(form.get("email") ?? "").trim();
+    const confirmation = String(form.get("confirmation") ?? "");
+    if (name.length < 2) return setError("Please enter a name with at least 2 characters.");
+    if (!rules.every((rule) => rule.test(password))) return setError("Please meet every password requirement.");
+    if (password !== confirmation) return setError("The passwords do not match.");
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`${API_URL}/api/v1/auth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, email, password }) });
+      if (response.status === 409) throw new Error("That name or email is already in use.");
+      if (!response.ok) {
+        const details = await response.json().catch(() => null);
+        throw new Error(details?.detail ?? "We could not create your account.");
+      }
+      const data = await response.json();
+      if (!data.challenge_id || !data.user) throw new Error("The registration response was incomplete.");
+      setChallengeId(data.challenge_id);
+    } catch (requestError) {
+      setError(requestError instanceof TypeError ? `Cannot reach the backend at ${API_URL}. Start FastAPI on port 8000 and try again.` : requestError instanceof Error ? requestError.message : "Unable to create your account right now.");
+    } finally { setIsSubmitting(false); }
+  }
+
+  async function handleVerify(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`${API_URL}/api/v1/auth/verify-otp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ challenge_id: challengeId, code: otp }) });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.detail ?? "That verification code is not valid.");
+      if (!data.access_token || !data.user) throw new Error("The verification response was incomplete.");
+      localStorage.setItem("triply_token", data.access_token);
+      localStorage.setItem("triply_user", JSON.stringify(data.user));
+      setIsSuccess(true);
+      window.setTimeout(() => window.location.assign("/"), 1100);
+    } catch (requestError) {
+      setError(requestError instanceof TypeError ? `Cannot reach the backend at ${API_URL}. Start FastAPI on port 8000 and try again.` : requestError instanceof Error ? requestError.message : "Unable to verify your code right now.");
+    } finally { setIsSubmitting(false); }
+  }
+
+  return (
+    <main className="relative min-h-screen overflow-hidden bg-[#07110f] text-[#dce8df]"><AnimatedMap />{isSuccess && <div className="fixed inset-0 z-30 grid place-items-center bg-[#07110f]/90 px-6 backdrop-blur-md"><motion.div initial={{ opacity: 0, scale: 0.85, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }} transition={{ duration: 0.45, ease: "easeOut" }} className="text-center"><motion.div initial={{ scale: 0.5, rotate: -20 }} animate={{ scale: 1, rotate: 0 }} transition={{ delay: 0.15, duration: 0.5, type: "spring" }}><CheckCircle2 className="mx-auto text-[#6fae91]" size={64} strokeWidth={1.5} /></motion.div><p className="mt-6 text-xs font-semibold uppercase tracking-[0.25em] text-[#f08a68]">Account ready</p><h2 className="mt-3 text-3xl font-semibold text-white">Welcome to Triply.</h2><p className="mt-3 text-[#c5d4ca]">Opening your planner...</p></motion.div></div>}<div className="relative z-10 mx-auto flex min-h-screen max-w-6xl flex-col px-6 py-7 lg:px-10">
+      <header className="flex items-center justify-between border-b border-[#dce8df]/20 pb-5"><TriplyLogo /><Link href="/auth" className="text-sm text-[#c5dfcf] hover:text-[#f08a68]">Already a member? Log in</Link></header>
+      <section className="grid flex-1 items-center gap-12 py-12 lg:grid-cols-[1fr_440px] lg:gap-24"><motion.div initial={{ opacity: 0, x: -24 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.7, ease: "easeOut" }} className="max-w-xl"><motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.25, duration: 0.5 }} className="mb-6 text-xs font-semibold uppercase tracking-[0.25em] text-[#f08a68]">A better way to wander</motion.p><h1 className="text-5xl font-semibold leading-[0.95] tracking-[-0.04em] text-white sm:text-7xl">Make room for more places.</h1><motion.p initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4, duration: 0.6 }} className="mt-7 max-w-md text-lg leading-8 text-[#c5d4ca]">Create your Triply account and keep every small adventure close at hand.</motion.p></motion.div>
+        {challengeId ? <form onSubmit={handleVerify} className="border border-[#dce8df]/20 bg-[#0d211c]/95 p-7 shadow-[0_20px_70px_rgba(0,0,0,0.35)] backdrop-blur-xl sm:p-9"><p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#f08a68]">Check your inbox</p><h2 className="mt-3 text-3xl font-semibold text-white">Verify your email.</h2><p className="mt-4 text-sm leading-6 text-[#c5d4ca]">We sent a six-digit verification code to your email. It expires soon.</p><label className="mt-8 block text-sm text-[#d5e5da]">Verification code<input name="otp" required inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, ""))} placeholder="000000" className="mt-2 w-full border border-[#dce8df]/20 bg-[#07110f]/90 px-4 py-4 text-center text-2xl tracking-[0.35em] text-white outline-none placeholder:text-[#8eaaa0] focus:border-[#f08a68]" /></label>{error && <p role="alert" className="mt-4 text-sm text-[#ff9d82]">{error}</p>}<button disabled={isSubmitting} type="submit" className="mt-8 flex w-full items-center justify-between bg-[#f08a68] px-5 py-4 font-semibold text-[#07110f] transition-colors hover:bg-[#ffb092] disabled:opacity-60">{isSubmitting ? "Verifying..." : "Verify and continue"}<ArrowRight size={19} /></button><button type="button" onClick={() => { setChallengeId(null); setOtp(""); setError(""); }} className="mt-5 w-full text-sm text-[#9ac7ac] hover:text-[#f08a68]">Start over</button></form> : <form onSubmit={handleSubmit} className="border border-[#dce8df]/20 bg-[#0d211c]/95 p-7 shadow-[0_20px_70px_rgba(0,0,0,0.35)] backdrop-blur-xl sm:p-9"><p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#f08a68]">New account</p><h2 className="mt-3 text-3xl font-semibold text-white">Join Triply.</h2><div className="mt-7 space-y-4"><label className="block text-sm text-[#d5e5da]">Your name<span className="relative mt-2 block"><UserRound className="absolute left-4 top-1/2 -translate-y-1/2 text-[#9ac7ac]" size={18} /><input name="name" required minLength={2} placeholder="What should we call you?" className="w-full border border-[#dce8df]/20 bg-[#07110f]/90 py-3.5 pl-12 pr-4 text-white outline-none placeholder:text-[#8eaaa0] focus:border-[#f08a68]" /></span></label><label className="block text-sm text-[#d5e5da]">Email address<input name="email" required type="email" placeholder="you@example.com" className="mt-2 w-full border border-[#dce8df]/20 bg-[#07110f]/90 px-4 py-3.5 text-white outline-none placeholder:text-[#8eaaa0] focus:border-[#f08a68]" /></label><label className="block text-sm text-[#d5e5da]">Password<span className="relative mt-2 block"><LockKeyhole className="absolute left-4 top-1/2 -translate-y-1/2 text-[#9ac7ac]" size={18} /><input name="password" required type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Create a strong password" className="w-full border border-[#dce8df]/20 bg-[#07110f]/90 py-3.5 pl-12 pr-4 text-white outline-none placeholder:text-[#8eaaa0] focus:border-[#f08a68]" /></span></label><label className="block text-sm text-[#d5e5da]">Confirm password<input name="confirmation" required type="password" placeholder="Type it again" className="mt-2 w-full border border-[#dce8df]/20 bg-[#07110f]/90 px-4 py-3.5 text-white outline-none placeholder:text-[#8eaaa0] focus:border-[#f08a68]" /></label></div>
+          <div className="mt-5 grid grid-cols-2 gap-2">{rules.map((rule) => { const passed = rule.test(password); return <p key={rule.label} className={`flex items-center gap-2 text-xs ${passed ? "text-[#b5e4c7]" : "text-[#a9c0b3]"}`}>{passed ? <Check size={14} /> : <X size={14} />}{rule.label}</p>; })}</div>{error && <p role="alert" className="mt-4 text-sm text-[#ff9d82]">{error}</p>}{message && <p role="status" className="mt-4 text-sm text-[#b5e4c7]">{message}</p>}<button disabled={isSubmitting} type="submit" className="mt-7 flex w-full items-center justify-between bg-[#f08a68] px-5 py-4 font-semibold text-[#07110f] transition-colors hover:bg-[#ffb092] disabled:opacity-60">{isSubmitting ? "Creating account..." : "Create my account"}<ArrowRight size={19} /></button>
+        </form>}
+      </section>
+    </div></main>
+  );
+}
+</file>
+
+<file path="frontend/app/page.tsx">
+import TravelDashboard from "./components/ui/TravelDashboard";
+
+export default function Home() {
+  return (
+    <main>
+      <TravelDashboard />
+    </main>
+  );
+}
+</file>
+
+<file path="frontend/postcss.config.mjs">
+/** @type {import('postcss-load-config').Config} */
+const config = {
+  plugins: {
+    "@tailwindcss/postcss": {},
+    autoprefixer: {},
+  },
+};
+export default config;
+</file>
+
+<file path="backend/app/schemas/route.py">
+from pydantic import BaseModel, Field
+from typing import Any, List, Optional
+from datetime import datetime, time
+
+class WaypointBase(BaseModel):
+    name: str
+    category: str
+    latitude: float
+    longitude: float
+    order_index: int
+
+class WaypointCreate(WaypointBase):
+    pass
+
+class PointOfInterest(BaseModel):
+    name: str
+    city: Optional[str] = None
+    category: str
+    place_types: List[str] = Field(default_factory=list)
+    latitude: float
+    longitude: float
+    cost: float = Field(default=0, ge=0)
+    duration_minutes: int = Field(default=90, ge=15, le=360)
+    rating: float = Field(default=0, ge=0, le=5)
+    review_count: int = Field(default=0, ge=0)
+    popularity_score: float = Field(default=0, ge=0)
+    cuisine_types: List[str] = Field(default_factory=list)
+    wheelchair_accessible: bool = False
+    tags: List[str] = Field(default_factory=list)
+    near_transit: bool = False
+    transit_wait_minutes: int = Field(default=15, ge=0, le=120)
+    is_premium: bool = False
+    required: bool = False
+
+class LocationInput(BaseModel):
+    name: str
+    latitude: float
+    longitude: float
+
+class DailyPlanInput(BaseModel):
+    day: int = Field(ge=1)
+    start: LocationInput
+    final_destination: LocationInput
+
+class RoutePreferences(BaseModel):
+    pacing_tags: List[str] = Field(default_factory=list)
+    transport: str = "walking"
+    budget: float = Field(default=500, ge=0)
+    categories: List[str] = Field(default_factory=list)
+    hours_per_day: float = Field(default=8, gt=0, le=24)
+    start_time: time = time(9, 0)
+    end_time: time = time(17, 0)
+    meals_per_day: int = Field(default=1, ge=0, le=4)
+    dining_budget: Optional[float] = Field(default=None, ge=0)
+    party_size: int = Field(default=1, ge=1, le=50)
+    cuisine_types: List[str] = Field(default_factory=list, max_length=12)
+    max_walking_distance_km: float = Field(default=5, gt=0, le=50)
+    accessibility_required: bool = False
+    start_buffer_minutes: int = Field(default=60, ge=0, le=240)
+    end_buffer_minutes: int = Field(default=60, ge=0, le=240)
+
+class TransitLeg(BaseModel):
+    transit_mode: str
+    travel_duration_minutes: int = Field(ge=0)
+
+class ItineraryWaypoint(WaypointBase):
+    day: int
+    estimated_cost: float = 0
+    duration_minutes: int = 0
+    travel_minutes_from_previous: int = 0
+    arrival_time: Optional[time] = None
+    departure_time: Optional[time] = None
+    schedule_label: str = ""
+    transit_to_next: Optional[TransitLeg] = None
+
+class DailyItinerary(BaseModel):
+    day: int
+    start: ItineraryWaypoint
+    stops: List[ItineraryWaypoint] = Field(default_factory=list)
+    final_destination: ItineraryWaypoint
+    total_cost: float = 0
+    scheduled_minutes: int = 0
+    buffer_minutes: int = 0
+
+class WaypointResponse(WaypointBase):
+    id: int
+    route_id: int
+
+    class Config:
+        from_attributes = True
+
+class RouteBase(BaseModel):
+    title: str
+    city: str
+
+class RouteCreate(RouteBase):
+    waypoints: List[WaypointCreate] = Field(default_factory=list)
+    cities: List[str] = Field(default_factory=list)
+    daily_plans: List[DailyPlanInput] = Field(default_factory=list)
+    preferences: RoutePreferences = Field(default_factory=RoutePreferences)
+    points_of_interest: List[PointOfInterest] = Field(default_factory=list)
+
+class RouteResponse(RouteBase):
+    id: int
+    user_id: int
+    created_at: datetime
+    waypoints: List[WaypointResponse]
+    itineraries: List[DailyItinerary] = Field(default_factory=list)
+    navigation_url: Optional[str] = None
+    initial_budget: Optional[float] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SavedRouteCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    city: str = Field(min_length=1, max_length=200)
+    payload: dict[str, Any]
+
+
+class SavedRouteResponse(SavedRouteCreate):
+    id: int
+    user_id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+</file>
+
+<file path="backend/app/services/route.py">
+from sqlalchemy.orm import Session
+from typing import List
+from urllib.parse import urlencode
+from app.models.route import Route, Waypoint
+from app.schemas.route import DailyItinerary, RouteCreate
+from app.services.itinerary import flatten_itineraries, generate_itineraries
+
+
+def build_navigation_url(itineraries: list[DailyItinerary], transport: str) -> str | None:
+    """Build a Google Maps universal directions URL in itinerary order."""
+    waypoints = flatten_itineraries(itineraries)
+    if len(waypoints) < 2:
+        return None
+
+    coordinates = [f"{waypoint.latitude:.6f},{waypoint.longitude:.6f}" for waypoint in waypoints]
+    params = {
+        "api": "1",
+        "origin": coordinates[0],
+        "destination": coordinates[-1],
+        "travelmode": {"walking": "walking", "public transport": "transit", "by car": "driving"}.get(transport, "walking"),
+    }
+    if len(coordinates) > 2:
+        params["waypoints"] = "|".join(coordinates[1:-1])
+    return f"https://www.google.com/maps/dir/?{urlencode(params)}"
+
+def create_user_route(db: Session, route: RouteCreate, user_id: int):
+    itineraries = generate_itineraries(route)
+    generated_waypoints = flatten_itineraries(itineraries)
+    db_route = Route(
+        title=route.title,
+        city=route.city,
+        user_id=user_id
+    )
+    db.add(db_route)
+    db.commit()
+    db.refresh(db_route)
+
+    waypoints_data = []
+    for wp in generated_waypoints:
+        db_waypoint = Waypoint(
+            route_id=db_route.id,
+            name=wp.name,
+            category=wp.category,
+            latitude=wp.latitude,
+            longitude=wp.longitude,
+            order_index=wp.order_index
+        )
+        waypoints_data.append(db_waypoint)
+    
+    db.add_all(waypoints_data)
+    db.commit()
+    db.refresh(db_route)
+    
+    return db_route, itineraries
+
+def get_user_routes(db: Session, user_id: int) -> List[Route]:
+    return db.query(Route).filter(Route.user_id == user_id).all()
+</file>
+
+<file path="frontend/app/auth/page.tsx">
+"use client";
+
+import Link from "next/link";
+import { FormEvent, useState } from "react";
+import { motion } from "framer-motion";
+import { ArrowRight, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
+import AnimatedMap from "../components/shared/AnimatedMap";
+import TriplyLogo from "../components/shared/TriplyLogo";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+export default function AuthPage() {
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [challengeId, setChallengeId] = useState<string | null>(null);
+  const [otp, setOtp] = useState("");
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setIsSubmitting(true);
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch(`${API_URL}/api/v1/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ identifier: form.get("identifier"), password: form.get("password") }) });
+      if (!response.ok) {
+        const details = await response.json().catch(() => null);
+        throw new Error(details?.detail ?? "Email or password is not recognised.");
+      }
+      const data = await response.json();
+      if (!data.challenge_id || !data.user) throw new Error("The login response was incomplete.");
+      setChallengeId(data.challenge_id);
+    } catch (requestError) {
+      setError(requestError instanceof TypeError ? `Cannot reach the backend at ${API_URL}. Start FastAPI on port 8000 and try again.` : requestError instanceof Error ? requestError.message : "Unable to sign in right now.");
+    } finally { setIsSubmitting(false); }
+  }
+
+  async function handleVerify(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`${API_URL}/api/v1/auth/verify-otp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ challenge_id: challengeId, code: otp }) });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.detail ?? "That verification code is not valid.");
+      if (!data.access_token || !data.user) throw new Error("The verification response was incomplete.");
+      localStorage.setItem("triply_token", data.access_token);
+      localStorage.setItem("triply_user", JSON.stringify(data.user));
+      setIsSuccess(true);
+      window.setTimeout(() => window.location.assign("/"), 1100);
+    } catch (requestError) {
+      setError(requestError instanceof TypeError ? `Cannot reach the backend at ${API_URL}. Start FastAPI on port 8000 and try again.` : requestError instanceof Error ? requestError.message : "Unable to verify your code right now.");
+    } finally { setIsSubmitting(false); }
+  }
+
+  return (
+    <main className="relative min-h-screen overflow-hidden bg-[#07110f] text-[#dce8df]"><AnimatedMap />{isSuccess && <div className="fixed inset-0 z-30 grid place-items-center bg-[#07110f]/90 px-6 backdrop-blur-md"><motion.div initial={{ opacity: 0, scale: 0.85, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }} transition={{ duration: 0.45, ease: "easeOut" }} className="text-center"><motion.div initial={{ scale: 0.5, rotate: -20 }} animate={{ scale: 1, rotate: 0 }} transition={{ delay: 0.15, duration: 0.5, type: "spring" }}><CheckCircle2 className="mx-auto text-[#6fae91]" size={64} strokeWidth={1.5} /></motion.div><p className="mt-6 text-xs font-semibold uppercase tracking-[0.25em] text-[#f08a68]">Access confirmed</p><h2 className="mt-3 text-3xl font-semibold text-white">Welcome back.</h2><p className="mt-3 text-[#a9bbb0]">Opening your planner...</p></motion.div></div>}<div className="relative z-10 mx-auto flex min-h-screen max-w-6xl flex-col px-6 py-7 lg:px-10">
+      <header className="flex items-center justify-between border-b border-[#dce8df]/15 pb-5"><TriplyLogo /><Link href="/" className="text-sm text-[#9ac7ac] hover:text-[#f08a68]">Back to planner</Link></header>
+      <section className="grid flex-1 items-center gap-12 py-14 lg:grid-cols-[1fr_410px] lg:gap-24"><motion.div initial={{ opacity: 0, x: -24 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.7, ease: "easeOut" }} className="max-w-xl"><motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.25, duration: 0.5 }} className="mb-6 flex items-center gap-3 text-xs font-semibold uppercase tracking-[0.25em] text-[#f08a68]"><span className="h-px w-10 bg-[#f08a68]" />Return to your map</motion.p><h1 className="text-5xl font-semibold leading-[0.95] tracking-[-0.04em] sm:text-7xl">Your next good day is waiting.</h1><motion.p initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4, duration: 0.6 }} className="mt-7 max-w-md text-lg leading-8 text-[#a9bbb0]">Save the places you love, pick up unfinished plans, and keep your weekends feeling like yours.</motion.p></motion.div>
+        {challengeId ? <form onSubmit={handleVerify} className="border border-[#dce8df]/15 bg-[#0d211c]/90 p-7 shadow-[0_20px_70px_rgba(0,0,0,0.35)] backdrop-blur-xl sm:p-9"><p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#f08a68]">Check your inbox</p><h2 className="mt-3 text-3xl font-semibold">Enter your code.</h2><p className="mt-4 text-sm leading-6 text-[#a9bbb0]">We sent a six-digit verification code to your email. It expires soon.</p><label className="mt-8 block text-sm text-[#a9bbb0]">Verification code<input name="otp" required inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, ""))} placeholder="000000" className="mt-2 w-full border border-[#dce8df]/15 bg-[#07110f]/80 px-4 py-4 text-center text-2xl tracking-[0.35em] outline-none placeholder:text-[#719184] focus:border-[#f08a68]" /></label>{error && <p role="alert" className="mt-4 text-sm text-[#ff9d82]">{error}</p>}<button disabled={isSubmitting} type="submit" className="mt-8 flex w-full items-center justify-between bg-[#f08a68] px-5 py-4 font-semibold text-[#07110f] transition-colors hover:bg-[#ffb092] disabled:opacity-60">{isSubmitting ? "Verifying..." : "Verify and continue"}<ArrowRight size={19} /></button><button type="button" onClick={() => { setChallengeId(null); setOtp(""); setError(""); }} className="mt-5 w-full text-sm text-[#9ac7ac] hover:text-[#f08a68]">Use a different account</button></form> : <form onSubmit={handleSubmit} className="border border-[#dce8df]/15 bg-[#0d211c]/90 p-7 shadow-[0_20px_70px_rgba(0,0,0,0.35)] backdrop-blur-xl sm:p-9"><p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#f08a68]">Member access</p><h2 className="mt-3 text-3xl font-semibold">Welcome back.</h2><div className="mt-8 space-y-5"><label className="block text-sm text-[#a9bbb0]">Email or name<span className="relative mt-2 block"><Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-[#719184]" size={18} /><input name="identifier" required minLength={2} placeholder="you@example.com or Alex" className="w-full border border-[#dce8df]/15 bg-[#07110f]/80 py-3.5 pl-12 pr-4 outline-none placeholder:text-[#719184] focus:border-[#f08a68]" /></span></label><label className="block text-sm text-[#a9bbb0]">Password<span className="relative mt-2 block"><LockKeyhole className="absolute left-4 top-1/2 -translate-y-1/2 text-[#719184]" size={18} /><input name="password" required type="password" placeholder="Your password" className="w-full border border-[#dce8df]/15 bg-[#07110f]/80 py-3.5 pl-12 pr-4 outline-none placeholder:text-[#719184] focus:border-[#f08a68]" /></span></label></div>{error && <p role="alert" className="mt-4 text-sm text-[#ff9d82]">{error}</p>}<button disabled={isSubmitting} type="submit" className="mt-8 flex w-full items-center justify-between bg-[#f08a68] px-5 py-4 font-semibold text-[#07110f] transition-colors hover:bg-[#ffb092] disabled:opacity-60">{isSubmitting ? "Signing in..." : "Continue exploring"}<ArrowRight size={19} /></button><p className="mt-6 text-center text-sm text-[#719184]">New to Triply? <Link href="/signup" className="font-semibold text-[#9ac7ac] hover:text-[#f08a68]">Create an account</Link></p></form>}
+      </section>
+    </div></main>
+  );
+}
+</file>
+
+<file path="frontend/app/components/ui/RouteResults.tsx">
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { ArrowLeft, Download, ExternalLink, Loader2, Map, MapPin, Navigation, Route as RouteIcon, Save, TriangleAlert } from "lucide-react";
+import TriplyLogo from "../shared/TriplyLogo";
+
+const routeColors = ["#22d3ee", "#a78bfa", "#fbbf24", "#fb7185", "#34d399", "#f97316", "#60a5fa", "#e879f9"];
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+export type Waypoint = {
+  id?: number;
+  name: string;
+  category: string;
+  latitude: number;
+  longitude: number;
+  order_index: number;
+  arrival_time?: string | null;
+  departure_time?: string | null;
+  schedule_label?: string;
+  transit_to_next?: { transit_mode: string; travel_duration_minutes: number } | null;
+};
+
+export type DailyItinerary = {
+  day: number;
+  start: Waypoint;
+  stops: Waypoint[];
+  final_destination: Waypoint;
+};
+
+export type RouteData = {
+  title: string;
+  city: string;
+  waypoints: Waypoint[];
+  itineraries?: DailyItinerary[];
+  navigation_url?: string | null;
+  initial_budget?: number | null;
+};
+
+type LeafletMap = {
+  setView: (center: [number, number], zoom: number) => LeafletMap;
+  fitBounds: (bounds: unknown, options?: { padding: [number, number]; maxZoom?: number }) => LeafletMap;
+  invalidateSize: () => LeafletMap;
+  remove: () => void;
+};
+
+type LeafletMarker = {
+  addTo: (map: LeafletMap) => LeafletMarker;
+  bindPopup: (content: string) => LeafletMarker;
+  openPopup: () => LeafletMarker;
+  setIcon: (icon: unknown) => LeafletMarker;
+};
+
+type LeafletApi = {
+  map: (element: HTMLDivElement, options?: Record<string, unknown>) => LeafletMap;
+  tileLayer: (url: string, options: Record<string, unknown>) => { addTo: (map: LeafletMap) => void };
+  polyline: (points: [number, number][], options: Record<string, unknown>) => { addTo: (map: LeafletMap) => void; getBounds: () => unknown };
+  marker: (point: [number, number], options?: Record<string, unknown>) => LeafletMarker;
+  divIcon: (options: Record<string, unknown>) => unknown;
+  latLngBounds: (points: [number, number][]) => unknown;
+};
+
+declare global {
+  interface Window {
+    L?: LeafletApi;
+  }
+}
+
+function loadLeaflet(): Promise<LeafletApi> {
+  return new Promise((resolve, reject) => {
+    if (window.L) {
+      resolve(window.L);
+      return;
+    }
+
+    const existingScript = document.querySelector<HTMLScriptElement>("script[data-leaflet]");
+    if (existingScript) {
+      existingScript.addEventListener("load", () => window.L ? resolve(window.L) : reject(new Error("Map library failed to load.")));
+      existingScript.addEventListener("error", () => reject(new Error("Map library failed to load.")));
+      return;
+    }
+
+    const stylesheet = document.createElement("link");
+    stylesheet.rel = "stylesheet";
+    stylesheet.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+    document.head.appendChild(stylesheet);
+
+    const script = document.createElement("script");
+    script.dataset.leaflet = "true";
+    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    script.onload = () => window.L ? resolve(window.L) : reject(new Error("Map library failed to load."));
+    script.onerror = () => reject(new Error("Map library failed to load."));
+    document.body.appendChild(script);
+  });
+}
+
+function escapePopupText(value: string) {
+  return value.replace(/[&<>\"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#039;" })[character] ?? character);
+}
+
+function isParkingWaypoint(waypoint: Waypoint) {
+  return /parking|garage/i.test(waypoint.category);
+}
+
+function parkingIcon(leaflet: LeafletApi) {
+  return leaflet.divIcon({
+    className: "triply-parking-marker",
+    html: '<span aria-label="Parking">P</span>',
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+  });
+}
+
+function selectedParkingIcon(leaflet: LeafletApi) {
+  return leaflet.divIcon({
+    className: "triply-parking-marker triply-marker-selected",
+    html: '<span aria-label="Selected parking">P</span>',
+    iconSize: [46, 46],
+    iconAnchor: [23, 23],
+  });
+}
+
+function stopIcon(leaflet: LeafletApi, color: string) {
+  return leaflet.divIcon({
+    className: "triply-stop-marker",
+    html: `<span style="background:${color}"></span>`,
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+  });
+}
+
+function selectedStopIcon(leaflet: LeafletApi, color: string) {
+  return leaflet.divIcon({
+    className: "triply-stop-marker triply-marker-selected",
+    html: `<span style="background:${color}"></span>`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+  });
+}
+
+export default function RouteResults({ route, onBack }: { route: RouteData; onBack: () => void }) {
+  const timelineRef = useRef<HTMLElement>(null);
+  const mapElement = useRef<HTMLDivElement>(null);
+  const mapInstance = useRef<LeafletMap | null>(null);
+  const markerRecords = useRef<Record<string, { marker: LeafletMarker; normalIcon: unknown; selectedIcon: unknown }>>({});
+  const selectedMarkerKey = useRef<string | null>(null);
+  const [selectedStop, setSelectedStop] = useState<string | null>(null);
+  const [isMapLoading, setIsMapLoading] = useState(true);
+  const [mapError, setMapError] = useState("");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const orderedWaypoints = [...route.waypoints].sort((first, second) => first.order_index - second.order_index);
+  const dailyRoutes = route.itineraries?.length ? route.itineraries.map((itinerary) => ({ day: itinerary.day, waypoints: [itinerary.start, ...itinerary.stops, itinerary.final_destination] })) : [{ day: 1, waypoints: orderedWaypoints }];
+  const mapWaypoints = dailyRoutes.flatMap((dailyRoute) => dailyRoute.waypoints);
+  const estimatedCost = mapWaypoints.reduce((total, waypoint) => total + (waypoint.estimated_cost ?? 0), 0);
+  const remainingBudget = Math.max(0, (route.initial_budget ?? 0) - estimatedCost);
+  const fatigueWarnings = dailyRoutes.map((dailyRoute) => {
+    let walkingLegs = 0;
+    return dailyRoute.waypoints.slice(0, -1).map((waypoint, index) => {
+      const isWalking = waypoint.transit_to_next?.transit_mode === "walking" || waypoint.transit_to_next?.transit_mode === "foot";
+      walkingLegs = isWalking ? walkingLegs + 1 : 0;
+      const next = dailyRoute.waypoints[index + 1];
+      const warning = walkingLegs >= 3 && !/cafe|restaurant|dining|coffee/i.test(next.category);
+      return warning ? index + 1 : null;
+    }).filter((index): index is number => index !== null);
+  });
+
+  function buildMapsUrl() {
+    if (mapWaypoints.length < 2) return "";
+    const coordinates = mapWaypoints.map((waypoint) => `${waypoint.latitude},${waypoint.longitude}`);
+    const params = new URLSearchParams({ api: "1", origin: coordinates[0], destination: coordinates.at(-1) ?? coordinates[0], travelmode: "walking" });
+    if (coordinates.length > 2) params.set("waypoints", coordinates.slice(1, -1).join("|"));
+    return `https://www.google.com/maps/dir/?${params.toString()}`;
+  }
+
+  async function downloadBoardingPass() {
+    if (!timelineRef.current) return;
+    const html2pdf = (await import("html2pdf.js")).default;
+    await html2pdf().set({
+      margin: 0.35,
+      filename: `${route.city.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-boarding-pass.pdf`,
+      image: { type: "jpeg", quality: 0.98 },
+      html2canvas: { scale: 2, backgroundColor: "#040814", useCORS: true },
+      jsPDF: { unit: "in", format: "a4", orientation: "portrait" },
+    }).from(timelineRef.current).save();
+  }
+
+  async function saveCurrentRoute() {
+    const token = localStorage.getItem("triply_token");
+    if (!token) return;
+    setSaveState("saving");
+    try {
+      const response = await fetch(`${API_URL}/api/v1/routes/save`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ title: route.title, city: route.city, payload: route }) });
+      if (!response.ok) throw new Error("Unable to save this route.");
+      setSaveState("saved");
+    } catch {
+      setSaveState("error");
+    }
+  }
+
+  useEffect(() => {
+    let isActive = true;
+    setIsMapLoading(true);
+    setMapError("");
+    async function drawRoute() {
+      if (!mapElement.current || mapWaypoints.length === 0) return;
+      try {
+        const leaflet = await loadLeaflet();
+        if (!isActive || !mapElement.current) return;
+        const map = leaflet.map(mapElement.current, { zoomControl: true, scrollWheelZoom: true });
+        mapInstance.current = map;
+        leaflet.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "&copy; OpenStreetMap contributors", maxZoom: 19 }).addTo(map);
+
+        const waypointPoints = mapWaypoints.map((waypoint) => [waypoint.latitude, waypoint.longitude] as [number, number]);
+        dailyRoutes.forEach((dailyRoute, dayIndex) => dailyRoute.waypoints.forEach((waypoint, index) => {
+          const markerKey = `${dailyRoute.day}-${index}`;
+          const color = routeColors[(dayIndex + index) % routeColors.length];
+          const normalIcon = isParkingWaypoint(waypoint) ? parkingIcon(leaflet) : stopIcon(leaflet, color);
+          const selectedIcon = isParkingWaypoint(waypoint) ? selectedParkingIcon(leaflet) : selectedStopIcon(leaflet, color);
+          const marker = leaflet.marker([waypoint.latitude, waypoint.longitude], { icon: normalIcon }).addTo(map).bindPopup(`<strong>${index + 1}. ${escapePopupText(waypoint.name)}</strong><br>${escapePopupText(waypoint.category)}`);
+          markerRecords.current[markerKey] = { marker, normalIcon, selectedIcon };
+        }));
+        const dayRoutes = await Promise.all(dailyRoutes.map(async (dailyRoute) => {
+          const dayPoints = dailyRoute.waypoints.map((waypoint) => [waypoint.latitude, waypoint.longitude] as [number, number]);
+          const segments = await Promise.all(dailyRoute.waypoints.slice(0, -1).map(async (waypoint, index) => {
+            const nextWaypoint = dailyRoute.waypoints[index + 1];
+            const coordinates = `${waypoint.longitude},${waypoint.latitude};${nextWaypoint.longitude},${nextWaypoint.latitude}`;
+            try {
+              const response = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordinates}?overview=full&geometries=geojson`);
+              if (!response.ok) throw new Error("The route service is unavailable.");
+              const data = await response.json();
+              const points = data.routes?.[0]?.geometry?.coordinates?.map(([longitude, latitude]: [number, number]) => [latitude, longitude] as [number, number]) ?? [dayPoints[index], dayPoints[index + 1]];
+              return { points, color: routeColors[(index + dailyRoutes.indexOf(dailyRoute)) % routeColors.length] };
+            } catch {
+              return { points: [dayPoints[index], dayPoints[index + 1]], color: routeColors[(index + dailyRoutes.indexOf(dailyRoute)) % routeColors.length] };
+            }
+          }));
+          return { day: dailyRoute.day, segments };
+        }));
+        if (!isActive) return;
+        dayRoutes.forEach((dayRoute) => {
+          dayRoute.segments.forEach((segment) => {
+            leaflet.polyline(segment.points, { color: segment.color, weight: 8, opacity: 0.95, lineCap: "round", lineJoin: "round" }).addTo(map);
+          });
+        });
+        map.fitBounds(leaflet.latLngBounds(waypointPoints), { padding: [40, 40], maxZoom: 13 });
+        const pendingMarkerKey = selectedMarkerKey.current;
+        if (pendingMarkerKey && markerRecords.current[pendingMarkerKey]) {
+          const pendingRecord = markerRecords.current[pendingMarkerKey];
+          const [pendingDay, pendingIndex] = pendingMarkerKey.split("-").map(Number);
+          const pendingWaypoint = dailyRoutes.find((dailyRoute) => dailyRoute.day === pendingDay)?.waypoints[pendingIndex];
+          pendingRecord.marker.setIcon(pendingRecord.selectedIcon).openPopup();
+          if (pendingWaypoint) map.setView([pendingWaypoint.latitude, pendingWaypoint.longitude], 17);
+        }
+        map.invalidateSize();
+        window.setTimeout(() => {
+          if (isActive) map.invalidateSize();
+        }, 250);
+        if (isActive) setIsMapLoading(false);
+      } catch (error) {
+        if (isActive) {
+          setMapError(error instanceof Error ? error.message : "Unable to load the map.");
+          setIsMapLoading(false);
+        }
+      }
+    }
+
+    drawRoute();
+    return () => {
+      isActive = false;
+      markerRecords.current = {};
+      selectedMarkerKey.current = null;
+      mapInstance.current?.remove();
+      mapInstance.current = null;
+    };
+  }, [route]);
+
+  const focusStop = (dailyRoute: typeof dailyRoutes[number], index: number) => {
+    const waypoint = dailyRoute.waypoints[index];
+    const markerKey = `${dailyRoute.day}-${index}`;
+    const previousKey = selectedMarkerKey.current;
+    if (previousKey && markerRecords.current[previousKey]) {
+      markerRecords.current[previousKey].marker.setIcon(markerRecords.current[previousKey].normalIcon);
+    }
+    const record = markerRecords.current[markerKey];
+    if (record) {
+      record.marker.setIcon(record.selectedIcon).openPopup();
+      mapInstance.current?.setView([waypoint.latitude, waypoint.longitude], 17);
+    }
+    selectedMarkerKey.current = markerKey;
+    setSelectedStop(markerKey);
+  };
+
+  return (
+    <main className="min-h-screen bg-[#040814] text-slate-200">
+      <header className="mx-auto flex max-w-[1500px] items-center justify-between border-b border-white/10 px-6 py-5 lg:px-10">
+        <TriplyLogo />
+        <div className="flex flex-wrap items-center justify-end gap-3"><button type="button" onClick={onBack} className="flex items-center gap-2 text-sm text-slate-300 transition-colors hover:text-cyan-200"><ArrowLeft size={16} /> Plan another route</button><button type="button" onClick={saveCurrentRoute} disabled={saveState === "saving" || saveState === "saved"} className="flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm font-semibold text-white transition-colors hover:border-cyan-300 hover:text-cyan-200 disabled:opacity-60"><Save size={16} />{saveState === "saved" ? "Saved" : saveState === "saving" ? "Saving..." : saveState === "error" ? "Retry save" : "Save route"}</button><button type="button" onClick={downloadBoardingPass} className="flex items-center gap-2 rounded-full border border-amber-300/50 bg-amber-300/10 px-4 py-2 text-sm font-semibold text-amber-200 transition-colors hover:bg-amber-300/20"><Download size={16} /> Download Boarding Pass (PDF)</button><a href={buildMapsUrl()} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-full bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-200"><Map size={16} /> Launch in Google Maps</a></div>
+      </header>
+      <div className="mx-auto grid min-h-[calc(100vh-78px)] max-w-[1500px] grid-cols-1 lg:grid-cols-[40%_60%]">
+        <section ref={timelineRef} className="order-2 flex flex-col border-r border-white/10 bg-[#040814] px-6 py-8 lg:order-1 lg:px-10 lg:py-12">
+          <div className="mb-8"><p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-300">Your route is ready</p><h1 className="mt-3 text-3xl font-semibold text-white sm:text-4xl">{route.title}</h1><p className="mt-3 text-slate-400">{route.city} · {orderedWaypoints.length} stops across {dailyRoutes.length} {dailyRoutes.length === 1 ? "day" : "days"}</p><div className="mt-5 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-400"><span className="font-semibold uppercase tracking-wider text-slate-500">Daily routes</span>{dailyRoutes.map((dailyRoute, index) => <span key={dailyRoute.day} className="inline-flex items-center gap-1.5"><span style={{ backgroundColor: routeColors[index % routeColors.length] }} className="size-2 rounded-full" />Day {dailyRoute.day}</span>)}</div></div>
+          <div className="mb-8 grid gap-3 sm:grid-cols-2"><div className="rounded-2xl border border-cyan-300/20 bg-cyan-300/5 p-4"><p className="text-xs uppercase tracking-[0.18em] text-cyan-200">Trip Summary</p><p className="mt-2 text-sm text-slate-400">Estimated remaining budget</p><p className="mt-1 text-2xl font-semibold text-white">{remainingBudget.toFixed(0)} LEI</p><p className="mt-1 text-xs text-slate-500">Estimated spend: {estimatedCost.toFixed(0)} LEI</p></div>{fatigueWarnings.some((warnings) => warnings.length > 0) && <div className="rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4 text-amber-100"><p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em]"><TriangleAlert size={16} /> Fatigue warning</p><p className="mt-2 text-sm">High Fatigue Zone: Consider adding a rest stop here.</p></div>}</div>
+          <div className="relative flex-1">
+            {dailyRoutes.map((dailyRoute, dayIndex) => <div key={dailyRoute.day} className="mb-10 last:mb-0"><div className="mb-5 flex items-center gap-3"><span style={{ backgroundColor: routeColors[dayIndex % routeColors.length] }} className="size-3 rounded-full" /><h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-white">Day {dailyRoute.day}</h2><span className="text-xs text-slate-500">{dailyRoute.waypoints.length} stops</span></div>{dailyRoute.waypoints.map((waypoint, index) => { const markerKey = `${dailyRoute.day}-${index}`; const parking = isParkingWaypoint(waypoint); const warning = fatigueWarnings[dayIndex].includes(index); return <div key={`${dailyRoute.day}-${waypoint.name}-${index}`} className="relative flex gap-4 pb-8 last:pb-0"><div className="relative flex w-8 shrink-0 justify-center"><span style={{ borderColor: routeColors[dayIndex % routeColors.length], color: routeColors[dayIndex % routeColors.length] }} className="z-10 grid size-8 place-items-center rounded-full border bg-slate-950 text-sm font-semibold">{index + 1}</span>{index < dailyRoute.waypoints.length - 1 && <span style={{ backgroundColor: routeColors[dayIndex % routeColors.length] }} className="absolute top-8 h-full w-px opacity-70" />}</div><button type="button" onClick={() => focusStop(dailyRoute, index)} className={`min-w-0 flex-1 rounded-2xl border p-3 text-left transition-all ${selectedStop === markerKey ? "border-cyan-300/70 bg-cyan-300/10 shadow-[0_0_24px_rgba(34,211,238,0.14)]" : "border-transparent hover:border-white/15 hover:bg-white/5"}`} aria-label={`Show ${waypoint.name} on map`}><p className={`text-xs font-semibold uppercase tracking-[0.16em] ${parking ? "text-orange-300" : "text-slate-500"}`}>{parking ? "P · Parking" : waypoint.category}</p><h3 className="mt-1 text-lg font-medium text-white">{waypoint.name}</h3>{waypoint.schedule_label && <p className="mt-1 text-sm font-semibold text-cyan-200">{waypoint.schedule_label}</p>}<p className="mt-1 text-xs text-slate-500">{waypoint.travel_minutes_from_previous ? `${waypoint.travel_minutes_from_previous} min travel` : "Starting point"}{waypoint.transit_to_next ? ` · next: ${waypoint.transit_to_next.transit_mode} ${waypoint.transit_to_next.travel_duration_minutes} min` : ""}</p>{warning && <span className="mt-2 flex items-center gap-1 text-xs font-semibold text-amber-300"><TriangleAlert size={13} /> Rest/Coffee break recommended here</span>}</button></div>; })}</div>)}
+          </div>
+          <div className="mt-10 border-t border-white/10 pt-5 text-sm text-slate-400"><RouteIcon className="mb-3 text-cyan-300" size={20} /><p>Drag the map to explore the route. Use the + and - controls or your mouse wheel to zoom.</p><a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-xs text-cyan-300 hover:text-cyan-200">Map data by OpenStreetMap <ExternalLink size={12} /></a></div>
+        </section>
+        <section className="order-1 relative min-h-[55vh] overflow-hidden bg-slate-900 lg:order-2 lg:min-h-0"><div ref={mapElement} className="absolute inset-0" />{isMapLoading && !mapError && <div className="absolute inset-0 z-[450] grid place-items-center bg-slate-950/35 backdrop-blur-[2px]"><div className="rounded-3xl border border-white/15 bg-slate-950/90 px-7 py-6 text-center shadow-2xl"><Loader2 className="mx-auto animate-spin text-cyan-300" size={30} /><p className="mt-4 text-sm font-semibold text-white">Opening your route map</p><p className="mt-1 text-xs text-slate-400">Plotting every stop and parking point...</p></div></div>}{mapError && <div className="absolute inset-x-6 top-6 z-[500] rounded-2xl border border-rose-300/30 bg-slate-950/90 p-4 text-sm text-rose-200 shadow-xl">{mapError} The stops are still listed on the left.</div>}{mapWaypoints.length === 0 && <div className="absolute inset-0 grid place-items-center text-slate-400">No map points were returned for this route.</div>}<div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-slate-950/50 to-transparent" /><div className="absolute bottom-5 left-5 z-[400] flex flex-wrap items-center gap-3 rounded-2xl border border-white/15 bg-slate-950/85 px-3 py-2 text-xs text-slate-300 backdrop-blur-md"><span className="flex items-center gap-1.5"><MapPin size={14} className="text-cyan-300" /> Stops</span><span className="flex items-center gap-1.5"><span className="grid size-4 place-items-center rounded-full bg-orange-500 text-[10px] font-black text-white">P</span> Parking</span></div></section>
+      </div>
+    </main>
+  );
+}
+</file>
+
+<file path="frontend/app/layout.tsx">
+import type { Metadata } from "next";
+import { Space_Grotesk } from "next/font/google";
+import "./globals.css";
+
+const spaceGrotesk = Space_Grotesk({ subsets: ["latin"] });
+
+export const metadata: Metadata = {
+  title: "Triply | Make time for the good parts",
+  description: "Plan thoughtful days away with Triply.",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="en">
+      <body className={`${spaceGrotesk.className} bg-[#07110f] text-[#dce8df] antialiased`}>
+        {children}
+      </body>
+    </html>
+  );
+}
+</file>
+
+<file path="frontend/package.json">
+{
+  "name": "frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "framer-motion": "^13.1.1",
+    "html2pdf.js": "^0.14.0",
+    "lucide-react": "^1.34.0",
+    "next": "16.3.3",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "autoprefixer": "^10.5.4",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.3",
+    "postcss": "^8.5.26",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5"
+  }
+}
+</file>
+
+<file path="backend/app/api/endpoints/auth.py">
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.core.security import verify_password, create_access_token
+from app.api.deps import get_current_user
+from app.services.user import get_user_by_email, get_user_by_name, password_is_used, create_user
+from app.schemas.auth import LoginRequest, RegisterRequest, AuthResponse, VerifyOTPRequest
+from app.schemas.user import UserCreate, UserResponse
+from app.models.user import User
+from app.services.otp import create_challenge, send_otp_email, verify_challenge
+
+router = APIRouter()
+
+
+@router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+def register(body: RegisterRequest, db: Session = Depends(get_db)) -> AuthResponse:
+    """Register a new user and return an access token."""
+    if get_user_by_email(db, email=body.email) or get_user_by_name(db, name=body.name):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="That name or email is already in use.",
+        )
+    if password_is_used(db, body.password):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="That password is already in use. Choose a different password.",
+        )
+
+    user_in = UserCreate(name=body.name.strip(), email=body.email.lower(), password=body.password)
+    try:
+        user = create_user(db=db, user=user_in)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="That name or email is already in use.",
+        ) from None
+    challenge, code = create_challenge(db, user)
+    try:
+        send_otp_email(user, code)
+    except RuntimeError as error:
+        db.delete(challenge)
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+
+    return AuthResponse(
+        user=UserResponse.model_validate(user),
+        challenge_id=challenge.id,
+    )
+
+
+@router.post("/login", response_model=AuthResponse)
+def login(body: LoginRequest, db: Session = Depends(get_db)) -> AuthResponse:
+    """Authenticate a user and return an access token."""
+    identifier = body.identifier.strip()
+    user = get_user_by_email(db, email=identifier) if "@" in identifier else get_user_by_name(db, name=identifier)
+    if not user or not verify_password(body.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password.",
+        )
+
+    challenge, code = create_challenge(db, user)
+    try:
+        send_otp_email(user, code)
+    except RuntimeError as error:
+        db.delete(challenge)
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+
+    return AuthResponse(
+        user=UserResponse.model_validate(user),
+        challenge_id=challenge.id,
+    )
+
+
+@router.post("/verify-otp", response_model=AuthResponse)
+def verify_otp(body: VerifyOTPRequest, db: Session = Depends(get_db)) -> AuthResponse:
+    """Verify a one-time email code and issue the access token."""
+    user = verify_challenge(db, body.challenge_id, body.code)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="That verification code is invalid, expired, or has too many attempts.",
+        )
+    return AuthResponse(
+        access_token=create_access_token(subject=user.id),
+        user=UserResponse.model_validate(user),
+        requires_2fa=False,
+    )
+
+
+@router.get("/me", response_model=UserResponse)
+def get_me(current_user: User = Depends(get_current_user)) -> UserResponse:
+    """Return the currently authenticated user."""
+    return UserResponse.model_validate(current_user)
+</file>
+
+<file path="backend/app/api/endpoints/routes.py">
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from typing import List
+
+from app.core.database import get_db
+from app.schemas.route import RouteCreate, RouteResponse, SavedRouteCreate, SavedRouteResponse
+from app.services import route as route_service
+from app.models.route import SavedRoute
+from app.models.user import User
+from app.api.deps import get_current_user
+
+router = APIRouter()
+
+
+@router.post("/save", response_model=SavedRouteResponse, status_code=status.HTTP_201_CREATED)
+def save_route(
+    saved_route: SavedRouteCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SavedRoute:
+    record = SavedRoute(
+        user_id=current_user.id,
+        title=saved_route.title,
+        city=saved_route.city,
+        payload=saved_route.payload,
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@router.get("/me", response_model=List[SavedRouteResponse])
+def read_saved_routes(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> List[SavedRoute]:
+    return db.query(SavedRoute).filter(SavedRoute.user_id == current_user.id).order_by(SavedRoute.created_at.desc()).all()
+
+
+@router.get("/{route_id}", response_model=SavedRouteResponse)
+def read_saved_route(
+    route_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SavedRoute:
+    record = db.query(SavedRoute).filter(SavedRoute.id == route_id, SavedRoute.user_id == current_user.id).first()
+    if not record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved route not found.")
+    return record
+
+@router.post("/", response_model=RouteResponse)
+def create_route(
+    route: RouteCreate, 
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    db_route, itineraries = route_service.create_user_route(db=db, route=route, user_id=current_user.id)
+    response = RouteResponse.model_validate(db_route)
+    return response.model_copy(update={"itineraries": itineraries, "navigation_url": route_service.build_navigation_url(itineraries, route.preferences.transport), "initial_budget": route.preferences.budget})
+
+@router.get("/", response_model=List[RouteResponse])
+def read_user_routes(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    return route_service.get_user_routes(db=db, user_id=current_user.id)
+</file>
+
+<file path="backend/app/api/router.py">
+from fastapi import APIRouter
+from app.api.endpoints import health, users, routes, auth
+
+api_router = APIRouter()
+api_router.include_router(health.router, prefix="/system", tags=["System"])
+api_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
+api_router.include_router(users.router, prefix="/users", tags=["Users"])
+api_router.include_router(routes.router, prefix="/routes", tags=["Routes"])
+</file>
+
+<file path="backend/app/core/config.py">
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    PROJECT_NAME: str = "Route Maker API"
+    VERSION: str = "1.0.0"
+    API_V1_STR: str = "/api/v1"
+    DATABASE_URL: str = "sqlite:///./route_maker.db"
+    
+    SECRET_KEY: str = "privatekeyedvt"
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7 
+    OTP_EXPIRE_MINUTES: int = 10
+    OTP_MAX_ATTEMPTS: int = 5
+    OTP_DELIVERY_MODE: str = "console"
+    SMTP_HOST: str | None = None
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str | None = None
+    SMTP_PASSWORD: str | None = None
+    SMTP_FROM_EMAIL: str = "no-reply@route-maker.local"
+    SMTP_USE_TLS: bool = True
+
+settings = Settings()
+</file>
+
+<file path="backend/app/models/user.py">
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime
+from sqlalchemy.orm import relationship
+from app.core.database import Base
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True, nullable=False)
+    email = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    walking_speed_kmh = Column(Float, default=4.5) 
+    is_active = Column(Boolean, default=True)
+
+    routes = relationship("Route", back_populates="user", cascade="all, delete-orphan")
+    saved_routes = relationship("SavedRoute", back_populates="user", cascade="all, delete-orphan")
+
+
+class AuthChallenge(Base):
+    __tablename__ = "auth_challenges"
+
+    id = Column(String(36), primary_key=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    code_hash = Column(String(64), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    attempts = Column(Integer, nullable=False, default=0)
+    used = Column(Boolean, nullable=False, default=False)
+</file>
+
+<file path="backend/app/services/user.py">
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+from app.models.user import User
+from app.schemas.user import UserCreate
+from app.core.security import get_password_hash, verify_password
+
+
+def get_user_by_email(db: Session, email: str) -> User | None:
+    return db.query(User).filter(func.lower(User.email) == email.lower()).first()
+
+
+def get_user_by_name(db: Session, name: str) -> User | None:
+    return db.query(User).filter(func.lower(User.name) == name.lower()).first()
+
+
+def password_is_used(db: Session, password: str) -> bool:
+    return any(verify_password(password, user.hashed_password) for user in db.query(User).all())
+
+
+def get_user_by_id(db: Session, user_id: int) -> User | None:
+    return db.query(User).filter(User.id == user_id).first()
+
+
+def create_user(db: Session, user: UserCreate) -> User:
+    db_user = User(
+        name=user.name,
+        email=user.email,
+        hashed_password=get_password_hash(user.password),
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+</file>
+
+<file path="frontend/app/components/ui/TravelDashboard.tsx">
+"use client";
+
+import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
+import RouteResults, { RouteData } from './RouteResults';
+import TriplyLogo from '../shared/TriplyLogo';
+import { motion, AnimatePresence } from 'framer-motion';
+import { 
+  MapPin, Clock, Compass, Utensils, 
+  Landmark, Footprints, Camera, Coffee, Route, 
+  Map as MapIcon, Zap, ChevronRight, Loader2, UserRound, Settings, LogOut, CheckCircle2, Sparkles, ArrowDown,
+  TrainFront, Car, WalletCards, SunMedium, Heart, ArrowUpRight
+} from 'lucide-react';
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+const AnimatedMapBackground = () => {
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  if (!isMounted) {
+    return <div className="fixed inset-0 overflow-hidden bg-[#040814] pointer-events-none z-0" />;
+  }
+
+  return (
+    <div className="fixed inset-0 overflow-hidden bg-[#040814] pointer-events-none z-0">
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b_1px,transparent_1px),linear-gradient(to_bottom,#1e293b_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] opacity-20" />
+      
+      <svg className="absolute inset-0 w-full h-full opacity-40">
+        <motion.path
+          d="M-100,600 C200,500 300,700 600,300 S1000,500 1400,200"
+          fill="none" stroke="#22d3ee" strokeWidth="2" strokeDasharray="10 10"
+          initial={{ pathLength: 0, opacity: 0 }}
+          animate={{ pathLength: 1, opacity: 1 }}
+          transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
+        />
+        <motion.path
+          d="M1400,800 C1100,700 900,900 600,600 S200,700 -100,400"
+          fill="none" stroke="#fbbf24" strokeWidth="1.5" strokeDasharray="5 15"
+          initial={{ pathLength: 0, opacity: 0 }}
+          animate={{ pathLength: 1, opacity: 0.5 }}
+          transition={{ duration: 12, repeat: Infinity, ease: "linear" }}
+        />
+      </svg>
+
+      {[...Array(6)].map((_, i) => (
+        <motion.div
+          key={`marker-${i}`}
+          className="absolute text-cyan-500/30"
+          style={{ left: `${Math.random() * 100}%`, top: `${Math.random() * 100}%` }}
+          animate={{ y: [0, -30, 0], opacity: [0.2, 0.8, 0.2], scale: [1, 1.2, 1] }}
+          transition={{ duration: 4 + Math.random() * 3, repeat: Infinity, ease: "easeInOut" }}
+        >
+          <div className="relative">
+            <MapIcon size={48} strokeWidth={1} />
+            <div className="absolute inset-0 bg-cyan-400/20 blur-xl rounded-full" />
+          </div>
+        </motion.div>
+      ))}
+      
+      <div className="absolute top-0 left-1/4 w-96 h-96 bg-cyan-600/20 rounded-full blur-[120px]" />
+      <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-blue-600/20 rounded-full blur-[120px]" />
+    </div>
+  );
+};
+
+const PREFERENCES = [
+  { id: 'landmarks', icon: Landmark, title: 'Historical Landmarks', category: 'Attractions' },
+  { id: 'culture', icon: Camera, title: 'Arts & Culture', category: 'Attractions' },
+  { id: 'parks', icon: Landmark, title: 'Parks & Gardens', category: 'Outdoors' },
+  { id: 'viewpoints', icon: MapIcon, title: 'Viewpoints', category: 'Outdoors' },
+  { id: 'fine-dining', icon: Utensils, title: 'Fine Dining', category: 'Dining' },
+  { id: 'cafes', icon: Coffee, title: 'Local Cafes', category: 'Dining' },
+  { id: 'fast-pace', icon: Zap, title: 'Action Packed', category: 'Pacing' },
+  { id: 'slow-pace', icon: Footprints, title: 'Leisurely Stroll', category: 'Pacing' },
+];
+
+const TRANSPORT = [
+  { id: 'walk', label: 'Mostly walking', icon: Footprints },
+  { id: 'transit', label: 'Public transport', icon: TrainFront },
+  { id: 'car', label: 'By car', icon: Car },
+];
+
+const QUICK_TRIPS = [
+  { city: 'Lisbon', note: 'Hills, tiles & small plates', color: 'from-orange-200 to-rose-300' },
+  { city: 'Copenhagen', note: 'Bikes, bakeries & design', color: 'from-sky-200 to-teal-300' },
+  { city: 'Kyoto', note: 'Quiet lanes & old gardens', color: 'from-amber-100 to-red-200' },
+];
+
+type DailyPlan = { start: string; final: string };
+type GeocodedPlace = { display_name: string; lat: string; lon: string };
+type CityPoi = { name: string; city: string; category: string; latitude: number; longitude: number; cost: number; duration_minutes: number; rating: number; popularity_score: number; cuisine_types: string[]; wheelchair_accessible: boolean; tags: string[]; is_premium: boolean; required: boolean };
+
+export default function TravelDashboard() {
+  const [user, setUser] = useState<{ name: string; email: string } | null>(null);
+  const [isAccountOpen, setIsAccountOpen] = useState(false);
+  const [isLogoutPromptOpen, setIsLogoutPromptOpen] = useState(false);
+  const [isSignedOut, setIsSignedOut] = useState(false);
+  const [activePrefs, setActivePrefs] = useState<string[]>([]);
+  const [cities, setCities] = useState("Bucharest");
+  const [days, setDays] = useState<number>(1);
+  const [dailyPlans, setDailyPlans] = useState<DailyPlan[]>([
+    { start: "", final: "" },
+  ]);
+  const [sameAccommodation, setSameAccommodation] = useState(true);
+  const [startTime, setStartTime] = useState("09:00");
+  const [endTime, setEndTime] = useState("17:00");
+  const [mealsPerDay, setMealsPerDay] = useState<number>(1);
+  const [diningBudget, setDiningBudget] = useState<number>(80);
+  const [partySize, setPartySize] = useState<number>(2);
+  const [cuisineTypes, setCuisineTypes] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [budget, setBudget] = useState<number>(500);
+  const [maxWalkingDistance, setMaxWalkingDistance] = useState<number>(5);
+  const [accessibilityRequired, setAccessibilityRequired] = useState(false);
+  const [transport, setTransport] = useState('walk');
+  const [saved, setSaved] = useState(false);
+  const [generatedRoute, setGeneratedRoute] = useState<RouteData | null>(null);
+
+  useEffect(() => {
+    const storedUser = localStorage.getItem('triply_user');
+    if (storedUser) {
+      try {
+        setUser(JSON.parse(storedUser));
+      } catch {
+        localStorage.removeItem('triply_user');
+      }
+    }
+  }, []);
+
+  const handleSignOut = () => {
+    setIsLogoutPromptOpen(true);
+    setIsAccountOpen(false);
+  };
+
+  const handleChangeAccount = () => {
+    localStorage.removeItem('triply_token');
+    localStorage.removeItem('triply_user');
+    window.location.assign('/auth');
+  };
+
+  const confirmSignOut = () => {
+    localStorage.removeItem('triply_token');
+    localStorage.removeItem('triply_user');
+    setUser(null);
+    setIsLogoutPromptOpen(false);
+    setIsSignedOut(true);
+    window.setTimeout(() => setIsSignedOut(false), 1000);
+  };
+  
+  const togglePref = (id: string) => {
+    setActivePrefs(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
+  };
+
+  const clearPreferences = () => setActivePrefs([]);
+  const selectAllPreferences = () => setActivePrefs(PREFERENCES.map((preference) => preference.id));
+
+  const scrollToPlanner = () => document.getElementById("planner")?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  const surprisePlan = () => {
+    setCities("Bucharest");
+    setTransport("walk");
+    setActivePrefs(["landmarks", "culture", "parks"]);
+    scrollToPlanner();
+  };
+
+  const updateDays = (value: number) => {
+    const nextDays = Math.max(1, Math.min(14, value || 1));
+    setDays(nextDays);
+    setDailyPlans((currentPlans) => Array.from({ length: nextDays }, (_, index) => currentPlans[index] ?? { start: "", final: "" }));
+  };
+
+  const updateDailyPlan = (dayIndex: number, field: keyof DailyPlan, value: string) => {
+    setDailyPlans((currentPlans) => currentPlans.map((plan, index) => index === dayIndex || (sameAccommodation && field === "final" && index > 0) ? { ...plan, [field]: value } : plan));
+  };
+
+  const toggleSameAccommodation = (enabled: boolean) => {
+    setSameAccommodation(enabled);
+    if (enabled) setDailyPlans((currentPlans) => currentPlans.map((plan, index) => index === 0 ? plan : { ...plan, final: currentPlans[0].final }));
+  };
+
+  const geocode = async (place: string, cityContext = ""): Promise<GeocodedPlace> => {
+    const query = cityContext ? `${place}, ${cityContext}` : place;
+    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`, { headers: { "Accept-Language": "en" } });
+    if (!response.ok) throw new Error(`Could not search for ${place}.`);
+    const results = await response.json() as GeocodedPlace[];
+    if (!results[0]) throw new Error(`Could not find ${place}. Check the spelling or add more address detail.`);
+    return results[0];
+  };
+
+  const discoverCityPois = async (city: string, place: GeocodedPlace): Promise<CityPoi[]> => {
+    const query = `[out:json][timeout:20];(nwr(around:5000,${place.lat},${place.lon})["tourism"~"museum|gallery|attraction|viewpoint|zoo|theme_park"];nwr(around:5000,${place.lat},${place.lon})["historic"];nwr(around:5000,${place.lat},${place.lon})["amenity"~"cafe|restaurant"];nwr(around:5000,${place.lat},${place.lon})["leisure"="park"];);out center tags;`;
+    const endpoints = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
+    let data: { elements?: Array<{ id: number; lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }> } | null = null;
+    for (const endpoint of endpoints) {
+      try {
+        const response = await fetch(`${endpoint}?data=${encodeURIComponent(query)}`);
+        if (response.ok) {
+          data = await response.json();
+          break;
+        }
+      } catch {
+        // Try the next public Overpass instance.
+      }
+    }
+    const overpassPois = (data?.elements ?? []).flatMap((element) => {
+      const tags = element.tags ?? {};
+      const latitude = element.lat ?? element.center?.lat;
+      const longitude = element.lon ?? element.center?.lon;
+      if (!tags.name || latitude === undefined || longitude === undefined) return [];
+      const rawCategory = tags.amenity === "cafe" ? "Local Cafes" : tags.amenity === "restaurant" ? "Fine Dining" : tags.tourism === "museum" || tags.tourism === "gallery" ? "Arts & Culture" : tags.tourism === "viewpoint" ? "Viewpoints" : tags.leisure === "park" ? "Parks & Gardens" : "Historical Landmarks";
+      const cost = rawCategory === "Fine Dining" ? 80 : rawCategory === "Local Cafes" ? 15 : rawCategory === "Arts & Culture" ? 20 : 0;
+      return [{ name: tags.name, city, category: rawCategory, latitude, longitude, cost, duration_minutes: rawCategory === "Historical Landmarks" ? 45 : 60, rating: 0, popularity_score: 0, cuisine_types: tags.cuisine ? tags.cuisine.split(";").map((cuisine) => cuisine.trim()) : [], wheelchair_accessible: tags.wheelchair === "yes", tags: Object.values(tags), is_premium: false, required: false }];
+    });
+    if (overpassPois.length >= 10) return overpassPois.slice(0, 10);
+
+    const fallbackQueries = ["landmark", "museum", "cafe", "park"];
+    const fallbackPois: CityPoi[] = [];
+    for (const category of fallbackQueries) {
+      try {
+        const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=${encodeURIComponent(`${category}, ${city}`)}`, { headers: { "Accept-Language": "en" } });
+        if (!response.ok) continue;
+        const results = await response.json() as Array<GeocodedPlace & { type?: string; name?: string }>;
+        for (const result of results) {
+          const name = result.name || result.display_name.split(",")[0];
+          if (!name) continue;
+          const rawCategory = category === "cafe" ? "Local Cafes" : category === "museum" ? "Arts & Culture" : category === "park" ? "Parks & Gardens" : "Historical Landmarks";
+          fallbackPois.push({ name, city, category: rawCategory, latitude: Number(result.lat), longitude: Number(result.lon), cost: category === "cafe" ? 15 : category === "museum" ? 20 : 0, duration_minutes: 45, rating: 0, popularity_score: 0, cuisine_types: [], wheelchair_accessible: false, tags: [category], is_premium: false, required: false });
+        }
+      } catch {
+        // Keep any places found by earlier providers.
+      }
+    }
+    const combined = [...overpassPois, ...fallbackPois];
+    return combined.filter((poi, index, all) => all.findIndex((candidate) => candidate.name.toLowerCase() === poi.name.toLowerCase()) === index).slice(0, 10);
+  };
+
+  const handleGenerateRoute = async () => {
+    const cityList = cities.split(",").map((city) => city.trim()).filter(Boolean);
+    const startMinutes = Number(startTime.split(":")[0]) * 60 + Number(startTime.split(":")[1]);
+    const endMinutes = Number(endTime.split(":")[0]) * 60 + Number(endTime.split(":")[1]);
+    if (cityList.length === 0 || dailyPlans.some((plan) => !plan.start.trim() || !plan.final.trim()) || endMinutes <= startMinutes) {
+      alert("Add the cities, valid daily start and final locations, and an end time after the start time.");
+      return;
+    }
+
+    setIsGenerating(true);
+
+    try {
+      const waypoints: Array<{ name: string; category: string; latitude: number; longitude: number; order_index: number }> = [];
+      const generatedDailyPlans = [];
+      const pointsOfInterest: CityPoi[] = [];
+      let orderIndex = 0;
+      for (const city of cityList) {
+        const location = await geocode(city);
+        try {
+          pointsOfInterest.push(...await discoverCityPois(city, location));
+        } catch {
+          // The route can still be built from its required daily anchors.
+        }
+      }
+      for (const [dayIndex, plan] of dailyPlans.entries()) {
+        const start = await geocode(plan.start);
+        const final = await geocode(plan.final);
+        generatedDailyPlans.push({ day: dayIndex + 1, start: { name: plan.start, latitude: Number(start.lat), longitude: Number(start.lon) }, final_destination: { name: plan.final, latitude: Number(final.lat), longitude: Number(final.lon) } });
+        waypoints.push({ name: plan.start, category: `Day ${dayIndex + 1} · Start`, latitude: Number(start.lat), longitude: Number(start.lon), order_index: orderIndex++ });
+        waypoints.push({ name: plan.final, category: `Day ${dayIndex + 1} · Final destination`, latitude: Number(final.lat), longitude: Number(final.lon), order_index: orderIndex++ });
+      }
+      const payload = {
+        title: `${cityList.join(", ")} · ${days}-day route`,
+        city: cityList.join(", "),
+        waypoints,
+        cities: cityList,
+        daily_plans: generatedDailyPlans,
+        points_of_interest: pointsOfInterest,
+        preferences: {
+          pacing_tags: activePrefs.map((preference) => preference === "fast-pace" ? "Action Packed" : preference === "slow-pace" ? "Leisurely Stroll" : preference),
+          transport: transport === "walk" ? "walking" : transport === "transit" ? "public transport" : "by car",
+          budget,
+          categories: activePrefs.map((preference) => preference === "landmarks" ? "Historical Landmarks" : preference === "culture" ? "Arts & Culture" : preference === "parks" ? "Parks & Gardens" : preference === "viewpoints" ? "Viewpoints" : preference === "cafes" ? "Local Cafes" : preference === "fine-dining" ? "Fine Dining" : preference),
+          hours_per_day: Math.max(1, (Number(endTime.split(":")[0]) * 60 + Number(endTime.split(":")[1]) - (Number(startTime.split(":")[0]) * 60 + Number(startTime.split(":")[1]))) / 60),
+          start_time: startTime,
+          end_time: endTime,
+          meals_per_day: mealsPerDay,
+          dining_budget: diningBudget,
+          party_size: partySize,
+          cuisine_types: cuisineTypes.split(",").map((cuisine) => cuisine.trim()).filter(Boolean),
+          max_walking_distance_km: maxWalkingDistance,
+          accessibility_required: accessibilityRequired,
+          start_buffer_minutes: 60,
+          end_buffer_minutes: 60,
+        },
+      };
+      const token = localStorage.getItem("triply_token");
+      if (!token?.trim()) {
+        localStorage.removeItem("triply_user");
+        window.location.assign("/auth");
+        return;
+      }
+      const response = await fetch(`${API_URL}/api/v1/routes/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token ?? ""}`
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const details = await response.json().catch(() => null);
+        if (response.status === 401 || response.status === 403) {
+          localStorage.removeItem("triply_token");
+          localStorage.removeItem("triply_user");
+          window.location.assign("/auth");
+          return;
+        }
+        throw new Error(details?.detail ?? `API Error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      setGeneratedRoute(data);
+      
+    } catch (error) {
+      console.error("Failed to compute route matrix:", error);
+      alert(error instanceof Error ? error.message : "We couldn't create this route.");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  if (generatedRoute) {
+    return <RouteResults route={generatedRoute} onBack={() => setGeneratedRoute(null)} />;
+  }
+
+  if (isGenerating) {
+    return (
+      <main className="relative grid min-h-screen place-items-center overflow-hidden bg-[#040814] px-6 text-slate-200">
+        <AnimatedMapBackground />
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="relative z-10 w-full max-w-2xl text-center"
+          aria-live="polite"
+        >
+          <div className="relative mx-auto mb-10 grid size-40 place-items-center">
+            <motion.div className="absolute inset-0 rounded-full border border-cyan-300/25" animate={{ scale: [0.8, 1.2, 0.8], opacity: [0.2, 0.7, 0.2] }} transition={{ duration: 2.8, repeat: Infinity }} />
+            <motion.div className="absolute inset-5 rounded-full border border-dashed border-amber-300/50" animate={{ rotate: 360 }} transition={{ duration: 8, repeat: Infinity, ease: "linear" }} />
+            <motion.div animate={{ y: [0, -8, 0], rotate: [-4, 4, -4] }} transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}>
+              <Route size={48} className="text-cyan-300" strokeWidth={1.5} />
+            </motion.div>
+          </div>
+          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-amber-300">Triply route lab</p>
+          <h1 className="mt-4 text-4xl font-bold tracking-tight text-white sm:text-6xl">Finding the shape of your day.</h1>
+          <p className="mx-auto mt-6 max-w-lg text-base leading-7 text-slate-300 sm:text-lg">
+            We are connecting your starting point, the places worth lingering at, and the best way home into one thoughtful route.
+          </p>
+          <div className="mx-auto mt-10 flex max-w-sm items-center gap-3 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
+            <motion.span className="h-px flex-1 bg-cyan-300/40" animate={{ opacity: [0.25, 1, 0.25] }} transition={{ duration: 1.2, repeat: Infinity }} />
+            <span>Searching real places</span>
+            <motion.span className="h-px flex-1 bg-amber-300/40" animate={{ opacity: [1, 0.25, 1] }} transition={{ duration: 1.2, repeat: Infinity }} />
+          </div>
+        </motion.section>
+      </main>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-transparent text-slate-200 font-sans relative overflow-x-hidden pb-20">{isLogoutPromptOpen && <div className="fixed inset-0 z-40 grid place-items-center bg-slate-950/80 px-6 backdrop-blur-md"><motion.div role="dialog" aria-modal="true" aria-labelledby="logout-title" initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} transition={{ duration: 0.25 }} className="w-full max-w-md rounded-3xl border border-white/15 bg-slate-950 p-7 text-center shadow-2xl"><motion.div initial={{ rotate: -8, scale: 0.8 }} animate={{ rotate: 0, scale: 1 }} transition={{ type: "spring" }}><LogOut className="mx-auto text-amber-300" size={34} /></motion.div><h2 id="logout-title" className="mt-5 text-2xl font-semibold text-white">Are you sure you want to sign out?</h2><p className="mt-3 text-sm leading-6 text-slate-400">Your current session will be cleared from this device.</p><div className="mt-7 flex justify-center gap-3"><button type="button" onClick={() => setIsLogoutPromptOpen(false)} className="rounded-full border border-white/15 px-5 py-3 text-sm text-slate-300 transition-colors hover:border-white/35 hover:text-white">Stay signed in</button><button type="button" onClick={confirmSignOut} className="rounded-full bg-rose-400 px-5 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-rose-300">Sign out</button></div></motion.div></div>}{isSignedOut && <div className="fixed inset-0 z-30 grid place-items-center bg-slate-950/85 px-6 backdrop-blur-md"><motion.div initial={{ opacity: 0, scale: 0.85, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }} className="text-center"><CheckCircle2 className="mx-auto text-cyan-300" size={64} strokeWidth={1.5} /><p className="mt-6 text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Session ended</p><h2 className="mt-3 text-3xl font-semibold text-white">You're signed out.</h2></motion.div></div>}
+      <AnimatedMapBackground />
+
+      <main className="relative z-10 max-w-6xl mx-auto px-6 pt-12">
+        <header className="sticky top-4 z-30 mb-12 flex items-center justify-between rounded-full border border-white/10 bg-slate-950/65 px-4 py-3 shadow-[0_12px_40px_rgba(0,0,0,0.25)] backdrop-blur-xl sm:px-5">
+          <TriplyLogo />
+          <nav className="flex items-center gap-3 text-sm text-slate-400 sm:gap-6">
+            <a href="#planner" className="hidden transition-colors hover:text-white sm:block">Plan a trip</a>
+            <a href="#inspiration" className="hidden transition-colors hover:text-white sm:block">Inspiration</a>
+            {user && <Link href="/routes/history" className="hidden transition-colors hover:text-white sm:block">My Routes</Link>}
+            {user ? <div className="relative"><button type="button" onClick={() => setIsAccountOpen(!isAccountOpen)} className="flex items-center gap-2 rounded-full border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-white transition-colors hover:border-cyan-300 hover:text-cyan-200 sm:px-4"><UserRound size={16} /><span className="max-w-32 truncate">{user.name}</span></button>{isAccountOpen && <div className="absolute right-0 top-14 z-20 w-72 rounded-3xl border border-white/15 bg-slate-950/95 p-5 text-left shadow-2xl backdrop-blur-xl"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-300">Your account</p><div className="mt-4 flex items-center gap-3"><span className="grid size-10 place-items-center rounded-full bg-cyan-300/15 text-cyan-200"><UserRound size={18} /></span><div className="min-w-0"><p className="truncate text-sm font-semibold text-white">{user.name}</p><p className="truncate text-xs text-slate-400">{user.email}</p></div></div><div className="my-5 border-t border-white/10" /><Link href="/settings" onClick={() => setIsAccountOpen(false)} className="flex items-center gap-2 text-sm text-slate-300 transition-colors hover:text-white"><Settings size={15} className="text-cyan-300" /> Account settings</Link><div className="mt-4 grid gap-2"><button type="button" onClick={handleChangeAccount} className="flex items-center gap-2 rounded-2xl border border-cyan-300/30 px-3 py-2.5 text-xs text-cyan-200 transition-colors hover:border-cyan-200 hover:bg-cyan-300/10"><UserRound size={14} /> Change account</button><button type="button" onClick={handleSignOut} className="flex items-center gap-2 rounded-2xl border border-white/10 px-3 py-2.5 text-xs text-slate-300 transition-colors hover:border-rose-300/50 hover:text-rose-200"><LogOut size={14} /> Sign out</button></div></div>}</div> : <Link href="/auth" className="flex items-center gap-2 rounded-full border border-white/15 px-3 py-2 text-white transition-colors hover:border-cyan-300 hover:text-cyan-200 sm:px-4"><UserRound size={16} /> <span className="hidden sm:inline">Log in</span></Link>}
+          </nav>
+        </header>
+        <motion.div initial="hidden" animate="visible" className="relative isolate mb-10 grid min-h-[19rem] items-center gap-8 overflow-hidden py-4 lg:grid-cols-[1.05fr_0.95fr] lg:gap-8">
+          <div className="relative z-10 max-w-2xl">
+            <motion.div variants={{ hidden: { opacity: 0, y: 14 }, visible: { opacity: 1, y: 0, transition: { duration: 0.55 } } }} className="mb-7 inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-950/50 px-4 py-2 text-sm font-medium text-cyan-300 shadow-[0_0_15px_rgba(34,211,238,0.2)]">
+              <Compass size={16} className="animate-spin-slow" />
+              <span>Triply travel planner</span>
+            </motion.div>
+            <motion.p variants={{ hidden: { opacity: 0, x: -12 }, visible: { opacity: 1, x: 0, transition: { delay: 0.12, duration: 0.55 } } }} className="mb-4 text-xs font-semibold uppercase tracking-[0.24em] text-amber-300">Plan less. Notice more.</motion.p>
+            <motion.h1 variants={{ hidden: { opacity: 0, y: 24 }, visible: { opacity: 1, y: 0, transition: { delay: 0.18, duration: 0.7 } } }} className="max-w-2xl text-5xl font-bold leading-[0.95] tracking-tight text-white drop-shadow-lg md:text-7xl">
+              Make time for the good parts.
+            </motion.h1>
+            <motion.p variants={{ hidden: { opacity: 0, y: 18 }, visible: { opacity: 1, y: 0, transition: { delay: 0.3, duration: 0.65 } } }} className="mt-6 max-w-xl text-lg leading-8 text-slate-300">
+              Build a day around the places that make a city feel alive, from the first coffee to the last beautiful turn home.
+            </motion.p>
+            <motion.div variants={{ hidden: { opacity: 0, y: 12 }, visible: { opacity: 1, y: 0, transition: { delay: 0.44, duration: 0.55 } } }} className="mt-6 flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-wider text-slate-400"><span className="rounded-full border border-white/10 bg-white/5 px-4 py-2">Real places</span><span className="rounded-full border border-white/10 bg-white/5 px-4 py-2">Your pace</span><span className="rounded-full border border-white/10 bg-white/5 px-4 py-2">One good day</span></motion.div>
+            <motion.div variants={{ hidden: { opacity: 0, y: 12 }, visible: { opacity: 1, y: 0, transition: { delay: 0.56, duration: 0.55 } } }} className="mt-6 flex flex-wrap items-center gap-3"><button type="button" onClick={scrollToPlanner} className="inline-flex items-center gap-2 rounded-full bg-cyan-300 px-5 py-3 text-sm font-semibold text-slate-950 transition-transform hover:-translate-y-0.5 hover:bg-cyan-200">Start planning <ArrowDown size={16} /></button><button type="button" onClick={surprisePlan} className="inline-flex items-center gap-2 rounded-full border border-white/15 px-5 py-3 text-sm font-semibold text-white transition-colors hover:border-amber-300/60 hover:text-amber-200"><Sparkles size={16} /> Surprise me</button></motion.div>
+          </div>
+          <motion.div aria-hidden="true" className="relative mx-auto h-72 w-full max-w-md lg:h-96" variants={{ hidden: { opacity: 0, scale: 0.88 }, visible: { opacity: 1, scale: 1, transition: { delay: 0.25, duration: 0.8 } } }}>
+            <div className="absolute left-1/2 top-1/2 size-48 -translate-x-1/2 -translate-y-1/2 rounded-full border border-cyan-300/20 bg-cyan-400/5 shadow-[0_0_90px_rgba(34,211,238,0.12)] lg:size-64" />
+            <motion.div className="absolute left-1/2 top-1/2 size-64 -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-amber-300/25 lg:size-80" animate={{ rotate: 360 }} transition={{ duration: 28, repeat: Infinity, ease: "linear" }} />
+            <motion.div className="absolute left-1/2 top-1/2 h-32 w-64 -translate-x-1/2 -translate-y-1/2 rounded-[50%] border-2 border-cyan-300/70" animate={{ rotate: [0, 8, 0, -8, 0], scale: [1, 1.04, 1] }} transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }} />
+            <motion.div className="absolute left-[18%] top-[32%] size-3 rounded-full bg-emerald-300 shadow-[0_0_18px_#6ee7b7]" animate={{ scale: [1, 1.4, 1] }} transition={{ duration: 2.4, repeat: Infinity }} />
+            <motion.div className="absolute right-[16%] top-[22%] size-3 rounded-full bg-amber-300 shadow-[0_0_18px_#fcd34d]" animate={{ scale: [1, 1.35, 1] }} transition={{ duration: 2.4, delay: 0.6, repeat: Infinity }} />
+            <motion.div className="absolute bottom-[21%] right-[24%] size-3 rounded-full bg-cyan-300 shadow-[0_0_18px_#67e8f9]" animate={{ scale: [1, 1.4, 1] }} transition={{ duration: 2.4, delay: 1.2, repeat: Infinity }} />
+            <span className="absolute left-[8%] top-[25%] rounded-full border border-emerald-300/20 bg-slate-950/80 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-200">Start</span>
+            <span className="absolute right-[2%] top-[14%] rounded-full border border-amber-300/20 bg-slate-950/80 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-200">Explore</span>
+            <span className="absolute bottom-[12%] right-[10%] rounded-full border border-cyan-300/20 bg-slate-950/80 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-cyan-200">Return</span>
+            <motion.div className="absolute left-[19%] top-[33%] size-8 rounded-full border border-emerald-200/30" animate={{ scale: [1, 2.4], opacity: [0.7, 0] }} transition={{ duration: 2.4, repeat: Infinity }} />
+          </motion.div>
+        </motion.div>
+
+        <div id="planner" className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:items-start">
+          <motion.div initial={{ opacity: 0, x: -30 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }} className="space-y-6 lg:contents">
+            <div className="bg-slate-900/60 backdrop-blur-xl border border-white/10 p-6 rounded-3xl shadow-2xl relative overflow-hidden group">
+              <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+              <h2 className="text-lg font-semibold mb-5 flex items-center gap-3 text-white">
+                <Route className="text-cyan-400" /> Build your route
+              </h2>
+              
+              <div className="space-y-4 relative">
+                
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">City or cities to visit
+                  <input type="text" value={cities} onChange={(event) => setCities(event.target.value)} placeholder="Bucharest, Brasov" className="mt-2 w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-4 text-white placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400" />
+                  <span className="mt-2 block text-xs font-normal normal-case tracking-normal text-slate-500">Separate multiple cities with commas.</span>
+                </label>
+                <div className="space-y-3">
+                  {dailyPlans.map((plan, dayIndex) => <div key={dayIndex} className="rounded-2xl border border-white/10 bg-black/20 p-3"><div className="mb-2 flex items-center justify-between"><p className="text-xs font-semibold uppercase tracking-wider text-cyan-300">Day {dayIndex + 1}</p>{sameAccommodation && dayIndex > 0 && <span className="text-[10px] uppercase tracking-wider text-slate-500">Same return</span>}</div><div className="grid gap-3 sm:grid-cols-2"><label className="block text-xs text-slate-400">Start from<input type="text" value={plan.start} onChange={(event) => updateDailyPlan(dayIndex, "start", event.target.value)} placeholder="Strada Cuza Voda 30" className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none" /></label><label className="block text-xs text-slate-400">Final destination<input type="text" value={plan.final} onChange={(event) => updateDailyPlan(dayIndex, "final", event.target.value)} placeholder="Accommodation or final stop" className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-amber-400 focus:outline-none" /></label></div></div>)}
+                </div>
+                <label className="flex items-center gap-3 text-xs text-slate-300"><input type="checkbox" checked={sameAccommodation} onChange={(event) => toggleSameAccommodation(event.target.checked)} className="size-4 accent-cyan-400" /> Return to the same accommodation every day</label>
+              </div>
+            </div>
+
+            <div className="bg-slate-900/60 backdrop-blur-xl border border-white/10 p-8 rounded-3xl shadow-2xl">
+              <h2 className="text-xl font-semibold mb-6 flex items-center gap-3 text-white">
+                <Clock className="text-cyan-400" /> Temporal Constraints
+              </h2>
+              <div className="grid grid-cols-3 gap-3">
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Days<input type="number" min="1" max="14" value={days} onChange={(event) => updateDays(Number(event.target.value))} className="mt-2 w-full rounded-2xl border border-white/10 bg-black/40 px-3 py-4 text-center text-lg text-white focus:border-cyan-400 focus:outline-none" /></label>
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Start<input type="time" value={startTime} onChange={(event) => setStartTime(event.target.value)} className="mt-2 w-full rounded-2xl border border-white/10 bg-black/40 px-3 py-4 text-center text-lg text-white focus:border-cyan-400 focus:outline-none" /></label>
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">End<input type="time" value={endTime} onChange={(event) => setEndTime(event.target.value)} className="mt-2 w-full rounded-2xl border border-white/10 bg-black/40 px-3 py-4 text-center text-lg text-white focus:border-cyan-400 focus:outline-none" /></label>
+              </div>
+              <div className="mt-5 border-t border-white/10 pt-5">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">Meals per day</label>
+                <div className="mt-2 flex items-center gap-3"><button type="button" aria-label="Fewer meals" onClick={() => setMealsPerDay((value) => Math.max(0, value - 1))} className="grid size-10 place-items-center rounded-full border border-white/15 text-lg text-white hover:border-cyan-300">-</button><span className="min-w-10 text-center text-lg font-semibold text-white">{mealsPerDay}</span><button type="button" aria-label="More meals" onClick={() => setMealsPerDay((value) => Math.min(4, value + 1))} className="grid size-10 place-items-center rounded-full border border-white/15 text-lg text-white hover:border-cyan-300">+</button><span className="text-xs text-slate-500">One hour is reserved before and after each day.</span></div>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2"><label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Dining budget total<input type="number" min="0" step="1" value={diningBudget} onChange={(event) => setDiningBudget(Math.max(0, Number(event.target.value)))} className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white focus:border-cyan-400 focus:outline-none" /></label><label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Party size<input type="number" min="1" max="50" step="1" value={partySize} onChange={(event) => setPartySize(Math.max(1, Math.min(50, Number(event.target.value))))} className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white focus:border-cyan-400 focus:outline-none" /></label></div>
+                <label className="mt-3 block text-xs font-semibold uppercase tracking-wider text-slate-400">Cuisine types<span className="mt-2 block text-[11px] font-normal normal-case tracking-normal text-slate-500">Comma-separated, for example Italian, Japanese</span><input type="text" value={cuisineTypes} onChange={(event) => setCuisineTypes(event.target.value)} placeholder="Italian, Japanese" className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none" /></label>
+              </div>
+            </div>
+
+            <div className="relative overflow-hidden rounded-3xl border border-cyan-300/15 bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.13),transparent_48%),rgba(15,23,42,0.72)] p-6 shadow-2xl backdrop-blur-xl">
+              <div className="pointer-events-none absolute -right-16 -top-16 size-40 rounded-full border border-amber-300/15" />
+              <h2 className="relative mb-2 flex items-center gap-3 text-lg font-semibold text-white"><WalletCards className="text-amber-300" /> Shape the day</h2>
+              <p className="mb-5 text-sm text-slate-400">Tune the rhythm, movement, and spend before Triply builds your route.</p>
+              <div className="mb-5 flex flex-wrap gap-2 text-[10px] font-semibold uppercase tracking-wider"><span className="rounded-full bg-amber-300/10 px-3 py-1.5 text-amber-200">{budget} LEI</span><span className="rounded-full bg-cyan-300/10 px-3 py-1.5 text-cyan-200">{transport === 'walk' ? 'Walking' : transport === 'transit' ? 'Transit' : 'Car'}</span></div>
+              <label className="mb-3 mt-5 block text-xs font-semibold uppercase tracking-wider text-slate-500">Getting around</label>
+              <div className="grid grid-cols-3 gap-2">
+                {TRANSPORT.map(({ id, label, icon: Icon }) => <button type="button" key={id} title={label} onClick={() => setTransport(id)} className={`grid place-items-center gap-1.5 rounded-2xl border p-2.5 text-[11px] transition-all ${transport === id ? 'border-cyan-300 bg-cyan-300/10 text-cyan-200 shadow-[0_0_18px_rgba(34,211,238,0.12)]' : 'border-white/10 text-slate-500 hover:border-white/30 hover:text-white'}`}><Icon size={17} />{label.replace('Mostly ', '')}</button>)}
+              </div>
+              <label className="mb-3 mt-5 block text-xs font-semibold uppercase tracking-wider text-slate-500">Exact budget (LEI)</label>
+              <div className="relative"><input type="number" min="0" step="1" value={budget} onChange={(event) => setBudget(Math.max(0, Number(event.target.value)))} className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 pr-16 text-white outline-none transition-shadow focus:border-amber-300 focus:ring-2 focus:ring-amber-300/30" /><span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs font-semibold text-amber-300">LEI</span></div>
+              <div className="mt-5 border-t border-white/10 pt-5"><label className="block text-xs font-semibold uppercase tracking-wider text-slate-500">Max walking distance <span className="float-right text-cyan-300">{maxWalkingDistance} km</span></label><input type="range" min="1" max="30" step="1" value={maxWalkingDistance} onChange={(event) => setMaxWalkingDistance(Number(event.target.value))} className="mt-4 w-full accent-cyan-300" /><div className="mt-1 flex justify-between text-[10px] text-slate-600"><span>1 km</span><span>30 km</span></div></div>
+              <label className="mt-5 flex cursor-pointer items-center justify-between gap-4 rounded-2xl border border-white/10 bg-black/20 p-3 text-xs text-slate-300"><span><span className="block font-semibold text-white">Wheelchair / stroller access</span><span className="mt-1 block text-slate-500">Prefer accessible destinations</span></span><input type="checkbox" checked={accessibilityRequired} onChange={(event) => setAccessibilityRequired(event.target.checked)} className="size-5 accent-cyan-300" /></label>
+            </div>
+          </motion.div>
+
+          <motion.div initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.4 }} className="flex flex-col space-y-6 lg:contents">
+            <div className="bg-slate-900/60 backdrop-blur-xl border border-white/10 p-6 rounded-3xl shadow-2xl">
+              <div className="flex justify-between items-end mb-5">
+                <h2 className="text-lg font-semibold flex items-center gap-3 text-white">
+                  <Zap className="text-cyan-400" /> What sounds good?
+                </h2>
+                <div className="flex items-center gap-3"><span className="text-xs font-mono text-cyan-400">{activePrefs.length} chosen</span>{activePrefs.length < PREFERENCES.length && <button type="button" onClick={selectAllPreferences} className="text-xs text-slate-500 transition-colors hover:text-white">All</button>}{activePrefs.length > 0 && <button type="button" onClick={clearPreferences} className="text-xs text-slate-500 transition-colors hover:text-white">Clear</button>}</div>
+              </div>
+              <p className="mb-5 text-sm text-slate-400">Pick the ingredients for your day. Triply will balance them with your time and pace.</p>
+
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+                <AnimatePresence>
+                  {PREFERENCES.map((pref, index) => {
+                    const isActive = activePrefs.includes(pref.id);
+                    const Icon = pref.icon;
+                    return (
+                      <motion.div
+                        key={pref.id}
+                        initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 * index }}
+                        onClick={() => togglePref(pref.id)}
+                        whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                        className={`cursor-pointer relative overflow-hidden rounded-2xl border p-3 transition-all duration-300 ${isActive ? 'bg-cyan-900/30 border-cyan-400 shadow-[0_0_20px_rgba(34,211,238,0.15)]' : 'bg-black/40 border-white/5 hover:border-white/20 hover:bg-white/5'}`}
+                      >
+                        {isActive && <motion.div layoutId={`glow-${pref.id}`} className="absolute inset-0 bg-gradient-to-br from-cyan-400/10 to-transparent" initial={{ opacity: 0 }} animate={{ opacity: 1 }} />}
+                        <div className="relative z-10 flex items-center gap-2.5">
+                          <div className={`rounded-xl p-2 transition-colors ${isActive ? 'bg-cyan-500/20 text-cyan-400' : 'bg-slate-800 text-slate-400'}`}>
+                            <Icon size={17} />
+                          </div>
+                          <div className="min-w-0">
+                            <h3 className={`truncate text-sm font-medium transition-colors ${isActive ? 'text-white' : 'text-slate-300'}`}>{pref.title}</h3>
+                            <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-slate-500">{pref.category}</p>
+                          </div>
+                        </div>
+                        <div className={`absolute top-4 right-4 w-2 h-2 rounded-full transition-colors duration-300 ${isActive ? 'bg-cyan-400 shadow-[0_0_8px_#22d3ee]' : 'bg-slate-800'}`} />
+                      </motion.div>
+                    );
+                  })}
+                </AnimatePresence>
+              </div>
+            </div>
+
+            <motion.button
+              onClick={handleGenerateRoute}
+              disabled={isGenerating}
+              whileHover={!isGenerating ? { scale: 1.02, textShadow: "0px 0px 8px rgb(255,255,255)" } : {}} 
+              whileTap={!isGenerating ? { scale: 0.98 } : {}}
+              className={`w-full relative group overflow-hidden rounded-3xl p-[2px] ${isGenerating ? 'opacity-80 cursor-not-allowed' : ''} bg-gradient-to-r from-cyan-500 to-blue-600`}
+            >
+              <div className="absolute inset-0 bg-gradient-to-r from-cyan-400 to-blue-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur-xl" />
+              <div className="relative bg-slate-950 px-8 py-6 rounded-[22px] flex items-center justify-between transition-all duration-300 group-hover:bg-opacity-0">
+                <div className="flex items-center gap-4">
+                  <div className="bg-white/10 p-2 rounded-full">
+                    {isGenerating ? <Loader2 className="text-white animate-spin" /> : <Route className="text-white" />}
+                  </div>
+                  <span className="text-2xl font-bold tracking-tight text-white">
+                    {isGenerating ? "Putting your day together..." : "Build my day"}
+                  </span>
+                </div>
+                <div className="bg-white/10 rounded-full p-2 group-hover:translate-x-2 transition-transform duration-300">
+                  <ChevronRight className="text-white" />
+                </div>
+              </div>
+            </motion.button>
+            <button type="button" onClick={() => setSaved(!saved)} className="flex items-center justify-center gap-2 py-2 text-sm text-slate-400 transition-colors hover:text-white"><Heart size={16} fill={saved ? 'currentColor' : 'none'} className={saved ? 'text-rose-300' : ''} /> {saved ? 'Trip idea saved' : 'Save this trip idea'}</button>
+          </motion.div>
+        </div>
+
+        <section id="inspiration" className="mt-20 border-t border-white/10 pt-9">
+          <div className="mb-6 flex items-end justify-between"><div><p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-amber-300">A little inspiration</p><h2 className="text-3xl font-semibold text-white">Start with a feeling.</h2></div><SunMedium className="text-amber-300" size={28} /></div>
+          <div className="grid gap-4 md:grid-cols-3">
+            {QUICK_TRIPS.map((trip, index) => <motion.button type="button" key={trip.city} onClick={() => { setCities(trip.city); scrollToPlanner(); }} whileHover={{ y: -5 }} whileTap={{ scale: 0.98 }} className={`group relative min-h-44 overflow-hidden rounded-3xl border border-white/10 bg-slate-900/75 p-6 text-left text-white shadow-xl backdrop-blur-xl ${index === 0 ? 'hover:border-orange-300/60' : index === 1 ? 'hover:border-cyan-300/60' : 'hover:border-amber-300/60'}`}><div className={`absolute -right-8 -top-10 text-[9rem] font-black leading-none opacity-10 ${index === 0 ? 'text-orange-300' : index === 1 ? 'text-cyan-300' : 'text-amber-300'}`}>{trip.city[0]}</div><div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent" /><ArrowUpRight className="absolute right-5 top-5 text-slate-400 transition-transform group-hover:translate-x-1 group-hover:-translate-y-1 group-hover:text-white" size={20} /><div className="relative mt-16"><p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">Quick route {index + 1}</p><h3 className="text-2xl font-semibold">{trip.city}</h3><p className="mt-1 text-sm text-slate-400">{trip.note}</p></div></motion.button>)}
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+</file>
+
+<file path="frontend/app/globals.css">
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background-color: #07110f;
+  color: #dce8df;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.triply-stop-marker,
+.triply-parking-marker {
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+}
+
+.triply-stop-marker span {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border: 3px solid #040814;
+  border-radius: 999px;
+  box-shadow: 0 0 0 3px rgb(255 255 255 / 75%), 0 2px 10px rgb(0 0 0 / 45%);
+}
+
+.triply-marker-selected {
+  z-index: 1000 !important;
+  filter: drop-shadow(0 0 9px rgb(255 255 255 / 95%));
+}
+
+.triply-marker-selected.triply-stop-marker span {
+  width: 22px;
+  height: 22px;
+  border-width: 4px;
+  box-shadow: 0 0 0 4px #fff, 0 0 18px rgb(34 211 238 / 90%);
+}
+
+.triply-parking-marker span {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 3px solid #fff7ed;
+  border-radius: 999px;
+  background: #f97316 !important;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 800;
+  box-shadow: 0 2px 12px rgb(15 23 42 / 60%);
+}
+
+.triply-marker-selected.triply-parking-marker span {
+  width: 42px;
+  height: 42px;
+  border-width: 4px;
+  background: #ea580c !important;
+  box-shadow: 0 0 0 4px #fff, 0 0 22px rgb(249 115 22 / 95%);
+  font-size: 24px;
+}
+</file>
+
+<file path="backend/main.py">
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.core.config import settings
+from app.api.router import api_router
+from app.core.database import engine
+from app.models.user import Base as UserBase
+from app.models.route import Base as RouteBase
+
+UserBase.metadata.create_all(bind=engine)
+RouteBase.metadata.create_all(bind=engine)
+
+def get_application() -> FastAPI:
+    application = FastAPI(
+        title=settings.PROJECT_NAME,
+        version=settings.VERSION,
+        openapi_url=f"{settings.API_V1_STR}/openapi.json"
+    )
+
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:3000"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    application.include_router(api_router, prefix=settings.API_V1_STR)
+
+    return application
+
+app = get_application()
+</file>
+
+<file path="backend/requirements.txt">
+alembic==1.19.1
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.14.2
+bcrypt==5.0.0
+cffi==2.1.1
+click==8.4.2
+cryptography==50.0.0
+dnspython==2.8.0
+ecdsa==0.19.2
+email-validator==2.3.0
+fastapi==0.141.1
+greenlet==3.5.5
+h11==0.16.0
+httptools==0.8.0
+idna==3.19
+Mako==1.4.1
+MarkupSafe==3.0.3
+pyasn1==0.6.4
+pycparser==3.0
+pydantic==2.13.4
+pydantic-settings==2.15.0
+pydantic_core==2.46.4
+python-dotenv==1.2.3
+python-jose==3.5.0
+python-multipart==0.0.32
+requests==2.32.3
+PyYAML==6.0.3
+rsa==4.9.1
+six==1.17.0
+SQLAlchemy==2.0.52
+starlette==1.6.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+uvicorn==0.52.4
+uvloop==0.22.1
+watchfiles==1.2.0
+websockets==17.0.1
+</file>
+
+</files>

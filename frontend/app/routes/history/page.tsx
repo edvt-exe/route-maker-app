@@ -1,60 +1,144 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowLeft, CalendarDays, Loader2, MapPinned, Route as RouteIcon } from "lucide-react";
-import RouteResults, { RouteData } from "../../components/ui/RouteResults";
-import TriplyLogo from "../../components/shared/TriplyLogo";
+import { motion } from "framer-motion";
+import Link from "next/link";
+import { ChevronLeft } from "lucide-react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export type Account = { name: string; email: string };
 
-type SavedRoute = {
-  id: number;
-  title: string;
-  city: string;
-  created_at: string;
-  payload: RouteData;
-};
+// Native-looking iOS Toggle
+const IOSToggle = ({ checked, onChange }: { checked: boolean, onChange: (v: boolean) => void }) => (
+  <button 
+    type="button"
+    onClick={() => onChange(!checked)} 
+    className={`relative w-[51px] h-[31px] rounded-full transition-colors duration-300 ease-in-out shrink-0 ${checked ? 'bg-[#32d74b]' : 'bg-[#39393d]'}`}
+  >
+    <div className={`absolute top-[2px] left-[2px] w-[27px] h-[27px] bg-white rounded-full shadow-[0_3px_8px_rgba(0,0,0,0.15)] transition-transform duration-300 ease-in-out ${checked ? 'translate-x-[20px]' : 'translate-x-0'}`} />
+  </button>
+);
 
-export default function RouteHistoryPage() {
-  const [routes, setRoutes] = useState<SavedRoute[]>([]);
-  const [selectedRoute, setSelectedRoute] = useState<RouteData | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState("");
+const ListRow = ({ 
+  label, 
+  children, 
+  isLast = false 
+}: { 
+  label: string; 
+  children: React.ReactNode; 
+  isLast?: boolean;
+}) => (
+  <div className="flex items-center justify-between py-3 pl-4 pr-4 bg-[#1c1c1e]">
+    <span className="text-[17px] text-white tracking-tight">{label}</span>
+    <div className="flex items-center gap-3">
+      {children}
+    </div>
+  </div>
+);
+
+const Divider = () => (
+  <div className="w-full pl-4 bg-[#1c1c1e]">
+    <div className="h-[0.5px] bg-[#38383a] w-full" />
+  </div>
+);
+
+export default function SettingsPage() {
+  const [account, setAccount] = useState<Account>({ name: "", email: "" });
+  const [emailUpdates, setEmailUpdates] = useState(true);
+  const [routeReminders, setRouteReminders] = useState(true);
+  const [privateRoutes, setPrivateRoutes] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem("triply_token");
-    if (!token) {
-      window.location.assign("/auth");
-      return;
+    const storedAccount = localStorage.getItem("triply_user");
+    if (storedAccount) {
+      try { 
+        setAccount(JSON.parse(storedAccount)); 
+      } catch { 
+        localStorage.removeItem("triply_user"); 
+      }
     }
-    fetch(`${API_URL}/api/v1/routes/me`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Unable to load your saved routes.");
-        return response.json() as Promise<SavedRoute[]>;
-      })
-      .then(setRoutes)
-      .catch((requestError) => setError(requestError instanceof Error ? requestError.message : "Unable to load your saved routes."))
-      .finally(() => setIsLoading(false));
   }, []);
 
-  if (selectedRoute) {
-    return <RouteResults route={selectedRoute} onBack={() => setSelectedRoute(null)} />;
-  }
+  const signOut = () => {
+    localStorage.removeItem("triply_token");
+    localStorage.removeItem("triply_user");
+    window.location.assign("/auth");
+  };
 
   return (
-    <main className="min-h-screen bg-[#040814] px-6 py-7 text-slate-200 lg:px-10">
-      <header className="mx-auto flex max-w-6xl items-center justify-between border-b border-white/10 pb-5">
-        <TriplyLogo />
-        <Link href="/" className="flex items-center gap-2 text-sm text-slate-300 transition-colors hover:text-cyan-200"><ArrowLeft size={16} /> Plan a route</Link>
-      </header>
-      <section className="mx-auto max-w-6xl py-12">
-        <div className="mb-10 flex items-end justify-between gap-5"><div><p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-300">Your library</p><h1 className="mt-3 text-4xl font-semibold text-white sm:text-5xl">My Routes</h1><p className="mt-4 max-w-xl text-slate-400">Your saved days, preserved exactly as planned.</p></div><RouteIcon className="hidden text-cyan-300 sm:block" size={34} /></div>
-        {isLoading && <div className="flex items-center gap-3 text-sm text-slate-400"><Loader2 className="animate-spin text-cyan-300" size={18} />Loading your routes...</div>}
-        {error && <p role="alert" className="border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{error}</p>}
-        {!isLoading && !error && routes.length === 0 && <div className="border border-dashed border-white/15 bg-slate-900/50 p-10 text-center"><MapPinned className="mx-auto text-cyan-300" size={30} /><h2 className="mt-4 text-xl font-semibold text-white">No saved routes yet</h2><p className="mt-2 text-sm text-slate-400">Build a route and use Save route to keep it here.</p><Link href="/" className="mt-6 inline-flex rounded-full bg-cyan-300 px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-cyan-200">Start planning</Link></div>}
-        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">{routes.map((route) => <button type="button" key={route.id} onClick={() => setSelectedRoute(route.payload)} className="group rounded-3xl border border-white/10 bg-slate-900/65 p-6 text-left shadow-xl backdrop-blur-xl transition-all hover:-translate-y-1 hover:border-cyan-300/50 hover:bg-slate-900/85"><div className="flex items-center justify-between text-xs uppercase tracking-[0.18em] text-cyan-300"><span>{route.city}</span><CalendarDays size={16} /></div><h2 className="mt-8 text-2xl font-semibold text-white group-hover:text-cyan-100">{route.title}</h2><p className="mt-4 text-sm text-slate-500">Saved {new Date(route.created_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}</p><span className="mt-8 block text-sm font-semibold text-amber-300">Open itinerary →</span></button>)}</div>
-      </section>
+    <main className="min-h-screen bg-[#000000] text-white font-sans selection:bg-[#0a84ff] selection:text-white">
+      <div className="mx-auto max-w-2xl px-4 py-10">
+        
+        {/* iOS Style Navigation Header */}
+        <header className="relative flex items-center justify-center mb-10">
+          <Link 
+            href="/" 
+            className="absolute left-0 flex items-center gap-1 text-[17px] text-[#0a84ff] hover:text-[#409cff] transition-colors"
+          >
+            <ChevronLeft size={24} className="-ml-2" /> 
+            <span>Back</span>
+          </Link>
+          <h1 className="text-[17px] font-semibold tracking-tight text-white">Settings</h1>
+        </header>
+
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+          
+          {/* Profile Section */}
+          <section>
+            <h2 className="text-[13px] text-[#8e8e93] uppercase tracking-wider mb-2 px-4">Profile</h2>
+            <div className="rounded-2xl overflow-hidden">
+              <ListRow label="Name">
+                <input 
+                  value={account.name} 
+                  onChange={(e) => setAccount({ ...account, name: e.target.value })} 
+                  className="bg-transparent text-right text-[17px] text-[#8e8e93] outline-none w-48 placeholder-[#38383a]" 
+                  placeholder="Your Name"
+                />
+              </ListRow>
+              <Divider />
+              <ListRow label="Email" isLast>
+                <span className="text-[17px] text-[#8e8e93] truncate max-w-[200px]">
+                  {account.email || 'Not provided'}
+                </span>
+              </ListRow>
+            </div>
+          </section>
+
+          {/* Preferences Section */}
+          <section>
+            <h2 className="text-[13px] text-[#8e8e93] uppercase tracking-wider mb-2 px-4">Preferences</h2>
+            <div className="rounded-2xl overflow-hidden">
+              <ListRow label="Trip Updates">
+                <IOSToggle checked={emailUpdates} onChange={setEmailUpdates} />
+              </ListRow>
+              <Divider />
+              <ListRow label="Route Reminders">
+                <IOSToggle checked={routeReminders} onChange={setRouteReminders} />
+              </ListRow>
+              <Divider />
+              <ListRow label="Private Routes" isLast>
+                <IOSToggle checked={privateRoutes} onChange={setPrivateRoutes} />
+              </ListRow>
+            </div>
+            <p className="text-[13px] text-[#8e8e93] mt-3 px-4 leading-tight">
+              Private routes keep your saved itineraries visible only to you.
+            </p>
+          </section>
+
+          {/* Danger Zone Section */}
+          <section className="pt-4">
+            <div className="rounded-2xl overflow-hidden">
+              <button 
+                type="button" 
+                onClick={signOut} 
+                className="w-full flex items-center justify-center bg-[#1c1c1e] active:bg-[#2c2c2e] text-[#ff453a] text-[17px] py-3.5 transition-colors"
+              >
+                Sign Out
+              </button>
+            </div>
+          </section>
+          
+        </motion.div>
+      </div>
     </main>
   );
 }
