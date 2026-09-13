@@ -16,6 +16,14 @@ const MinimalistBackground = () => (
   </div>
 );
 
+// Maps the frontend's pacing labels to the exact enum values the
+// WayFinder-Agent microservice expects (see PacingLevel in schemas.py).
+const pacingMap: Record<string, string> = {
+  'Relaxed': 'Relaxed',
+  'Balanced': 'Balanced',
+  'Non-stop action': 'Intense',
+};
+
 export default function TravelDashboard() {
   const [user, setUser] = useState<{ name: string; email: string } | null>(null);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
@@ -38,27 +46,28 @@ export default function TravelDashboard() {
   }, []);
 
   const confirmSignOut = () => {
-    localStorage.removeItem('triply_token');
-    localStorage.removeItem('triply_user');
-    setUser(null);
-    setIsLogoutPromptOpen(false);
-    setIsSignedOut(true);
-    window.setTimeout(() => setIsSignedOut(false), 1000);
-  };
+      localStorage.removeItem('triply_token');
+      localStorage.removeItem('triply_user');
+      setUser(null);
+      setIsLogoutPromptOpen(false);
+      setIsSignedOut(true);
+      window.setTimeout(() => setIsSignedOut(false), 1000);
+    };
 
-  const handleGenerate = async () => {
+    const handleGenerate = async () => {
+    if (!filters.city.trim()) {
+      alert("Please set the city.");
+      return;
+    }
     if (!filters.startPoint.trim()) {
       alert("Please set a starting point.");
       return;
     }
     setIsGenerating(true);
-    
+
     try {
       const token = localStorage.getItem("triply_token");
-      const cityList = filters.startPoint.split(',').map(c => c.trim()).filter(Boolean); 
-      const mainCity = cityList[0] || 'Custom City';
-      
-      // Mapăm opțiunile de transport din Frontend exact cum le cere Backend-ul
+
       const transportMap: Record<string, string> = {
         'walking': 'walking',
         'transit': 'public transport',
@@ -69,21 +78,33 @@ export default function TravelDashboard() {
       const backendTransport = transportMap[filters.mainTransport.toLowerCase()] || 'walking';
 
       const payload = {
-        title: `${mainCity} Trip`,
-        city: mainCity, // <-- REZOLVAREA EROAREI 422: Câmpul 'city' obligatoriu adăugat
-        cities: cityList,
-        daily_plans: Array.from({ length: filters.days }).map((_, i) => ({ 
-          day: i + 1, 
-          start: { name: filters.startPoint, latitude: 0, longitude: 0 }, 
-          final_destination: { name: filters.isRoundTrip ? filters.startPoint : (filters.endPoint || filters.startPoint), latitude: 0, longitude: 0 } 
+        title: `${filters.city} Trip`,
+        city: filters.city,
+        cities: [filters.city],
+        daily_plans: Array.from({ length: filters.days }).map((_, i) => ({
+          day: i + 1,
+          start: { name: filters.startPoint, latitude: 0, longitude: 0 },
+          final_destination: { name: filters.isRoundTrip ? filters.startPoint : (filters.endPoint || filters.startPoint), latitude: 0, longitude: 0 }
         })),
-        preferences: { 
-          transport: backendTransport, // <-- REZOLVARE: Valoarea exactă așteptată de engine
+        preferences: {
+          transport: backendTransport,
           budget: filters.maxBudget,
-          pacing_tags: [filters.pacing, ...filters.categories, filters.vibe],
+          pacing: pacingMap[filters.pacing] || 'Balanced',
+          categories: filters.categories,
+          vibe: filters.vibe,
           hours_per_day: Math.max(1, (parseInt(filters.endTime) - parseInt(filters.startTime))),
           meals_per_day: filters.meals,
-          accessibility_required: filters.accessibility
+          accessibility_required: filters.accessibility,
+          tourist_level: filters.touristLevel,
+          free_only: filters.freeOnly,
+          budget_allocation: filters.budgetAllocation,
+          dining_style: filters.diningStyle,
+          cuisine: filters.cuisine || null,
+          dietary_restrictions: filters.dietaryRestrictions,
+          weather_preference: filters.weatherPreference,
+          group_type: filters.groupType,
+          child_age: filters.childAge,
+          pet_friendly: filters.petFriendly,
         }
       };
 

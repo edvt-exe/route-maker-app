@@ -7,6 +7,7 @@ import {
 
 export interface RouteFilters {
   // Logistics & Time
+  city: string;
   startPoint: string;
   endPoint: string;
   isRoundTrip: boolean;
@@ -22,10 +23,10 @@ export interface RouteFilters {
 
   // Budget & Vibe
   maxBudget: number;
-  budgetAllocation: number; // 0 (Food) to 100 (Attractions)
+  budgetAllocation: number;
   freeOnly: boolean;
   categories: string[];
-  touristLevel: number; // 1 (Top Tourist) to 5 (Hidden Gems)
+  touristLevel: number;
   vibe: string;
   weatherPreference: 'Mostly Outdoor' | 'Mostly Indoor';
 
@@ -42,6 +43,7 @@ export interface RouteFilters {
 }
 
 export const defaultFilters: RouteFilters = {
+  city: '',
   startPoint: '', endPoint: '', isRoundTrip: true, startTime: '09:00', endTime: '18:00',
   days: 1, pacing: 'Balanced',
   mainTransport: 'Walking', accessibility: false, avoid: [],
@@ -50,8 +52,6 @@ export const defaultFilters: RouteFilters = {
   meals: 2, diningStyle: [], cuisine: '', dietaryRestrictions: [],
   groupType: 'Solo', childAge: null, petFriendly: false
 };
-
-// --- iOS-Style Reusable UI Components ---
 
 const IOSToggle = ({ checked, onChange }: { checked: boolean, onChange: (v: boolean) => void }) => (
   <button 
@@ -105,8 +105,7 @@ const Section = ({ title, icon: Icon, isOpen, onToggle, children }: any) => (
   </div>
 );
 
-// --- Main Form Component ---
-
+// Main form component
 export interface AdvancedRouteFormProps {
   filters: RouteFilters;
   setFilters: React.Dispatch<React.SetStateAction<RouteFilters>>;
@@ -127,6 +126,9 @@ export default function AdvancedRouteForm({ filters, setFilters }: AdvancedRoute
       {/* 1. Logistics & Time */}
       <Section title="Logistics & Time" icon={Clock} isOpen={openSection === 1} onToggle={() => setOpenSection(openSection === 1 ? null : 1)}>
         <div className="space-y-1">
+          <ListRow label="City">
+            <input type="text" value={filters.city} onChange={e => update('city', e.target.value)} placeholder="e.g. Bucharest" className="bg-transparent text-right text-[17px] text-[#0a84ff] placeholder-[#8e8e93] outline-none w-40" />
+          </ListRow>
           <ListRow label="Start Point">
             <input type="text" value={filters.startPoint} onChange={e => update('startPoint', e.target.value)} placeholder="Address or Hotel" className="bg-transparent text-right text-[17px] text-[#0a84ff] placeholder-[#8e8e93] outline-none w-40" />
           </ListRow>
@@ -183,7 +185,7 @@ export default function AdvancedRouteForm({ filters, setFilters }: AdvancedRoute
       {/* 3. Budget & Vibe */}
       <Section title="Budget & Vibe" icon={Wallet} isOpen={openSection === 3} onToggle={() => setOpenSection(openSection === 3 ? null : 3)}>
         <div className="space-y-1">
-          <ListRow label="Max Daily Budget">
+          <ListRow label="Max Total Budget">
              <div className="flex items-center gap-2">
                <span className="text-[#8e8e93]">€</span>
                <input type="number" value={filters.maxBudget} onChange={e => update('maxBudget', Number(e.target.value))} className="bg-transparent text-right text-[17px] text-[#0a84ff] outline-none w-16" />
