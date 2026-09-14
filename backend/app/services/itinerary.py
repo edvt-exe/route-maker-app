@@ -1,13 +1,56 @@
 import httpx
+import logging
 import random
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from sqlalchemy.orm import Session
 
 from app.schemas.route import (
     RouteCreate, RouteData, DailyItinerarySchema,
     WaypointSchema, TransitDetails
 )
+
+logger = logging.getLogger("itinerary")
+
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+
+_geocode_cache: Dict[str, Tuple[float, float]] = {}
+
+
+async def geocode_address(address: str, city: str) -> Tuple[float, float]:
+    """
+    Resolves free-text address (or the city itself) to real (latitude,
+    longitude) via Nominatim/OpenStreetMap, so start/end waypoints and the
+    city-center fallback land at their real location on the map instead of
+    a placeholder or another city's hardcoded coordinates.
+
+    Returns (0.0, 0.0) on any failure — callers must treat that as
+    "unknown" and fall back to something sane (e.g. the city center),
+    never display it as a real pin.
+    """
+    query = address if city.lower() in address.lower() else f"{address}, {city}"
+    if query in _geocode_cache:
+        return _geocode_cache[query]
+
+    headers = {"User-Agent": "WayFinder-Agent/1.0 (student project; contact via GitHub edvt-exe)"}
+    params = {"q": query, "format": "json", "limit": 1}
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(NOMINATIM_URL, params=params, headers=headers)
+            response.raise_for_status()
+            results = response.json()
+    except Exception as exc:
+        logger.warning("Geocoding failed for '%s': %s", query, exc)
+        return (0.0, 0.0)
+
+    if not results:
+        logger.warning("Geocoding returned no results for '%s'", query)
+        return (0.0, 0.0)
+
+    lat, lon = float(results[0]["lat"]), float(results[0]["lon"])
+    _geocode_cache[query] = (lat, lon)
+    return (lat, lon)
 
 
 def _build_agent_payload(request: RouteCreate) -> Dict[str, Any]:
@@ -85,6 +128,9 @@ async def generate_itinerary(db: Session, request: RouteCreate) -> RouteData:
     if not fetched_pois:
         raise ValueError("The AI Agent returned zero POIs. Try relaxing the budget or filters.")
 
+    # City center is the safe fallback whenever a specific address cant be geocoded — never hardcode another city's coordinates here.
+    city_lat, city_lon = await geocode_address(city, city)
+
     pois_per_day = max(1, len(fetched_pois) // days_count)
 
     all_waypoints = []
@@ -96,30 +142,51 @@ async def generate_itinerary(db: Session, request: RouteCreate) -> RouteData:
         day_stops = []
         current_time = datetime.strptime("09:00 AM", "%I:%M %p")
 
+        day_plan = request.daily_plans[day_index - 1] if day_index - 1 < len(request.daily_plans) else {}
+        plan_start = day_plan.get("start", {}) if isinstance(day_plan, dict) else {}
+        plan_final = day_plan.get("final_destination", {}) if isinstance(day_plan, dict) else {}
+
+        start_name = plan_start.get("name") or city
+        start_lat, start_lon = await geocode_address(start_name, city)
+        if (start_lat, start_lon) == (0.0, 0.0):
+            start_lat, start_lon = city_lat, city_lon
+
+        day_stops.append(WaypointSchema(
+            id=global_order + 8000,
+            name=start_name,
+            category="start_point",
+            latitude=start_lat,
+            longitude=start_lon,
+            order_index=global_order,
+            arrival_time=current_time.strftime("%I:%M %p"),
+            departure_time=current_time.strftime("%I:%M %p"),
+            estimated_cost=0.0,
+        ))
+        global_order += 1
+
         start_idx = (day_index - 1) * pois_per_day
         end_idx = start_idx + pois_per_day if day_index < days_count else len(fetched_pois)
         day_pois = fetched_pois[start_idx:end_idx]
 
-        if prefs.transport == "by car" and day_pois:
-            first_poi = day_pois[0]
-            parking_wp = WaypointSchema(
-                id=global_order + 9000,
-                name=f"Parking near {first_poi.get('name', city)}",
-                category="parking",
-                latitude=float(first_poi.get('latitude', 44.4268)) + random.uniform(-0.002, 0.002),
-                longitude=float(first_poi.get('longitude', 26.1025)) + random.uniform(-0.002, 0.002),
-                order_index=global_order,
-                arrival_time=current_time.strftime("%I:%M %p"),
-                departure_time=(current_time + timedelta(minutes=15)).strftime("%I:%M %p"),
-                estimated_cost=15.0
-            )
-            day_stops.append(parking_wp)
-            global_order += 1
-            total_estimated_cost += 15.0
-            current_time += timedelta(minutes=15)
-
         for i, poi in enumerate(day_pois):
             travel_time = 15 if prefs.transport == "walking" else (5 if prefs.transport == "by car" else 10)
+
+            if prefs.transport == "by car":
+                parking_wp = WaypointSchema(
+                    id=global_order + 9000,
+                    name=f"Parking near {poi.get('name', city)}",
+                    category="parking",
+                    latitude=float(poi.get('latitude', city_lat)) + random.uniform(-0.002, 0.002),
+                    longitude=float(poi.get('longitude', city_lon)) + random.uniform(-0.002, 0.002),
+                    order_index=global_order,
+                    arrival_time=current_time.strftime("%I:%M %p"),
+                    departure_time=(current_time + timedelta(minutes=5)).strftime("%I:%M %p"),
+                    estimated_cost=5.0,
+                )
+                day_stops.append(parking_wp)
+                global_order += 1
+                total_estimated_cost += 5.0
+                current_time += timedelta(minutes=5)
 
             current_time += timedelta(minutes=travel_time)
             arrival = current_time.strftime("%I:%M %p")
@@ -138,8 +205,8 @@ async def generate_itinerary(db: Session, request: RouteCreate) -> RouteData:
                 id=global_order + 1000,
                 name=poi.get("name", "Unknown Location"),
                 category=poi.get("category", "attraction"),
-                latitude=float(poi.get("latitude", 0.0)),
-                longitude=float(poi.get("longitude", 0.0)),
+                latitude=float(poi.get("latitude", city_lat)),
+                longitude=float(poi.get("longitude", city_lon)),
                 order_index=global_order,
                 arrival_time=arrival,
                 departure_time=departure,
@@ -154,6 +221,31 @@ async def generate_itinerary(db: Session, request: RouteCreate) -> RouteData:
             day_stops.append(wp)
             global_order += 1
             total_estimated_cost += cost
+
+        final_name = plan_final.get("name") or start_name
+        if final_name == start_name:
+            final_lat, final_lon = start_lat, start_lon
+        else:
+            final_lat, final_lon = await geocode_address(final_name, city)
+            if (final_lat, final_lon) == (0.0, 0.0):
+                final_lat, final_lon = city_lat, city_lon
+
+        travel_time_back = 15 if prefs.transport == "walking" else (5 if prefs.transport == "by car" else 10)
+        current_time += timedelta(minutes=travel_time_back)
+
+        day_stops.append(WaypointSchema(
+            id=global_order + 8500,
+            name=final_name,
+            category="end_point",
+            latitude=final_lat,
+            longitude=final_lon,
+            order_index=global_order,
+            arrival_time=current_time.strftime("%I:%M %p"),
+            departure_time=current_time.strftime("%I:%M %p"),
+            estimated_cost=0.0,
+            travel_minutes_from_previous=travel_time_back,
+        ))
+        global_order += 1
 
         if not day_stops:
             continue
