@@ -1,12 +1,14 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Compass, UserRound, Settings, LogOut } from 'lucide-react';
 import RouteResults, { RouteData } from './RouteResults';
 import TriplyLogo from '../shared/TriplyLogo';
 import AdvancedRouteForm, { RouteFilters, defaultFilters } from './AdvancedRouteForm';
+import { saveRouteToHistory } from '../../lib/savedRoutes';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -23,33 +25,32 @@ const pacingMap: Record<string, string> = {
 };
 
 export default function TravelDashboard() {
-  const [user, setUser] = useState<{ name: string; email: string } | null>(null);
+  const router = useRouter();
+  const [user, setUser] = useState<{ name: string; email: string } | null>(() => {
+    if (typeof window === 'undefined') return null;
+
+    const stored = localStorage.getItem('triply_user');
+    if (!stored) return null;
+
+    try {
+      return JSON.parse(stored) as { name: string; email: string };
+    } catch {
+      localStorage.removeItem('triply_user');
+      return null;
+    }
+  });
   const [isAccountOpen, setIsAccountOpen] = useState(false);
   const [isLogoutPromptOpen, setIsLogoutPromptOpen] = useState(false);
-  const [isSignedOut, setIsSignedOut] = useState(false);
   
   const [filters, setFilters] = useState<RouteFilters>(defaultFilters);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedRoute, setGeneratedRoute] = useState<RouteData | null>(null);
-
-  useEffect(() => {
-    const stored = localStorage.getItem('triply_user');
-    if (stored) {
-      try {
-        setUser(JSON.parse(stored));
-      } catch {
-        localStorage.removeItem('triply_user');
-      }
-    }
-  }, []);
 
   const confirmSignOut = () => {
       localStorage.removeItem('triply_token');
       localStorage.removeItem('triply_user');
       setUser(null);
       setIsLogoutPromptOpen(false);
-      setIsSignedOut(true);
-      window.setTimeout(() => setIsSignedOut(false), 1000);
     };
 
       const handleGenerate = async () => {
@@ -115,11 +116,18 @@ export default function TravelDashboard() {
       });
 
       if (!res.ok) {
-        if (res.status === 401) window.location.assign("/auth");
+        if (res.status === 401) router.push("/auth");
         const details = await res.json().catch(() => null);
         throw new Error(details?.detail ?? "Failed to generate route.");
       }
-      setGeneratedRoute(await res.json());
+
+      const createdRoute = await res.json();
+      const saved = saveRouteToHistory(createdRoute);
+      if (saved) {
+        setGeneratedRoute(createdRoute);
+      } else {
+        setGeneratedRoute(createdRoute);
+      }
     } catch (err) {
       alert(err instanceof Error ? err.message : "Error generating route.");
     } finally {
@@ -177,6 +185,10 @@ export default function TravelDashboard() {
                       <p className="truncate text-[13px] text-[#8e8e93] mt-0.5">{user.email}</p>
                     </div>
                     <div className="p-1">
+                      <Link href="/routes/history" className="flex items-center justify-between px-3 py-2 text-[15px] text-white hover:bg-[#0a84ff] hover:text-white rounded-xl transition-colors">
+                        Saved Routes
+                        <Compass size={18} />
+                      </Link>
                       <Link href="/settings" className="flex items-center justify-between px-3 py-2 text-[15px] text-white hover:bg-[#0a84ff] hover:text-white rounded-xl transition-colors">
                         Settings
                         <Settings size={18} />
