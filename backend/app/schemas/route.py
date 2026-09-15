@@ -47,6 +47,8 @@ class RoutePreferences(BaseModel):
     hours_per_day: int = 8
     meals_per_day: int = 2
     accessibility_required: bool = False
+    start_time: str = "09:00"
+    end_time: str = "18:00"
 
     tourist_level: int = 3
     free_only: bool = False

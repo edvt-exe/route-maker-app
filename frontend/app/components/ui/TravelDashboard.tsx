@@ -16,8 +16,6 @@ const MinimalistBackground = () => (
   </div>
 );
 
-// Maps the frontend's pacing labels to the exact enum values the
-// WayFinder-Agent microservice expects (see PacingLevel in schemas.py).
 const pacingMap: Record<string, string> = {
   'Relaxed': 'Relaxed',
   'Balanced': 'Balanced',
@@ -54,7 +52,7 @@ export default function TravelDashboard() {
       window.setTimeout(() => setIsSignedOut(false), 1000);
     };
 
-    const handleGenerate = async () => {
+      const handleGenerate = async () => {
     if (!filters.city.trim()) {
       alert("Please set the city.");
       return;
@@ -95,6 +93,8 @@ export default function TravelDashboard() {
           hours_per_day: Math.max(1, (parseInt(filters.endTime) - parseInt(filters.startTime))),
           meals_per_day: filters.meals,
           accessibility_required: filters.accessibility,
+          start_time: filters.startTime,
+          end_time: filters.endTime,
           tourist_level: filters.touristLevel,
           free_only: filters.freeOnly,
           budget_allocation: filters.budgetAllocation,

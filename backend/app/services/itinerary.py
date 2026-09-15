@@ -1,5 +1,6 @@
 import httpx
 import logging
+import math
 import random
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Tuple
@@ -13,21 +14,72 @@ from app.schemas.route import (
 logger = logging.getLogger("itinerary")
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+OSRM_ROUTE_URL = "https://router.project-osrm.org/route/v1"
+
+PARKING_RATE_PER_HOUR = 3.0
+
+OSRM_PROFILE_BY_TRANSPORT = {
+    "walking": "foot",
+    "by car": "driving",
+}
+
+AVERAGE_SPEED_KMH = {
+    "walking": 4.5,
+    "by car": 25.0,
+    "public transport": 18.0,
+}
 
 _geocode_cache: Dict[str, Tuple[float, float]] = {}
 
 
-async def geocode_address(address: str, city: str) -> Tuple[float, float]:
-    """
-    Resolves free-text address (or the city itself) to real (latitude,
-    longitude) via Nominatim/OpenStreetMap, so start/end waypoints and the
-    city-center fallback land at their real location on the map instead of
-    a placeholder or another city's hardcoded coordinates.
+def haversine_km(a: Tuple[float, float], b: Tuple[float, float]) -> float:
+    """Great-circle distance between two (lat, lon) points, in kilometers."""
+    lat1, lon1 = a
+    lat2, lon2 = b
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    h = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(h))
 
-    Returns (0.0, 0.0) on any failure — callers must treat that as
-    "unknown" and fall back to something sane (e.g. the city center),
-    never display it as a real pin.
+
+async def get_travel_time_minutes(
+    origin: Tuple[float, float], destination: Tuple[float, float], transport: str
+) -> int:
     """
+    Real travel time between two points, in whole minutes.
+
+    Tries OSRM (actual road-network duration) first for walking/driving;
+    falls back to a straight-line-distance / average-speed estimate if
+    OSRM is unavailable, times out, or the mode has no road profile
+    (public transport has no real road-routing equivalent here).
+    """
+    if origin == (0.0, 0.0) or destination == (0.0, 0.0):
+        return 10
+
+    profile = OSRM_PROFILE_BY_TRANSPORT.get(transport)
+    if profile:
+        try:
+            url = (
+                f"{OSRM_ROUTE_URL}/{profile}/"
+                f"{origin[1]},{origin[0]};{destination[1]},{destination[0]}?overview=false"
+            )
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                data = response.json()
+                duration_seconds = data["routes"][0]["duration"]
+                return max(1, round(duration_seconds / 60))
+        except Exception as exc:
+            logger.warning("OSRM travel-time lookup failed (%s) — falling back to distance estimate.", exc)
+
+    distance_km = haversine_km(origin, destination)
+    speed_kmh = AVERAGE_SPEED_KMH.get(transport, 15.0)
+    return max(1, round(distance_km / speed_kmh * 60))
+
+
+async def geocode_address(address: str, city: str) -> Tuple[float, float]:
     query = address if city.lower() in address.lower() else f"{address}, {city}"
     if query in _geocode_cache:
         return _geocode_cache[query]
@@ -54,16 +106,7 @@ async def geocode_address(address: str, city: str) -> Tuple[float, float]:
 
 
 def _build_agent_payload(request: RouteCreate) -> Dict[str, Any]:
-    """
-    Translates the main app's RouteCreate/RoutePreferences into the exact
-    payload contract expected by the WayFinder-Agent microservice
-    (see travel-agent-service/app/schemas.py::TravelSearchRequest).
-
-    Kept as a pure function (no I/O) so it's unit-testable on its own,
-    separate from the actual HTTP call in fetch_pois_from_agent.
-    """
     prefs = request.preferences
-
     real_start_point = request.city
     if request.daily_plans:
         first_day_start = request.daily_plans[0].get("start", {})
@@ -105,7 +148,6 @@ async def fetch_pois_from_agent(request: RouteCreate) -> List[Dict[str, Any]]:
     async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(agent_url, json=payload)
         if response.status_code >= 400:
-            # Surface the agent's actual error body (e.g. Pydantic validation details on a 422) instead of a generic "422 Unprocessable Content" with no explanation of which field failed.
             try:
                 detail = response.json()
             except ValueError:
@@ -128,7 +170,6 @@ async def generate_itinerary(db: Session, request: RouteCreate) -> RouteData:
     if not fetched_pois:
         raise ValueError("The AI Agent returned zero POIs. Try relaxing the budget or filters.")
 
-    # City center is the safe fallback whenever a specific address cant be geocoded — never hardcode another city's coordinates here.
     city_lat, city_lon = await geocode_address(city, city)
 
     pois_per_day = max(1, len(fetched_pois) // days_count)
@@ -140,7 +181,13 @@ async def generate_itinerary(db: Session, request: RouteCreate) -> RouteData:
 
     for day_index in range(1, days_count + 1):
         day_stops = []
-        current_time = datetime.strptime("09:00 AM", "%I:%M %p")
+        try:
+            current_time = datetime.strptime(prefs.start_time, "%H:%M")
+            day_end_time = datetime.strptime(prefs.end_time, "%H:%M")
+        except (ValueError, TypeError):
+            logger.warning("Invalid start_time/end_time (%r/%r) — falling back to 09:00-18:00.", prefs.start_time, prefs.end_time)
+            current_time = datetime.strptime("09:00", "%H:%M")
+            day_end_time = datetime.strptime("18:00", "%H:%M")
 
         day_plan = request.daily_plans[day_index - 1] if day_index - 1 < len(request.daily_plans) else {}
         plan_start = day_plan.get("start", {}) if isinstance(day_plan, dict) else {}
@@ -164,54 +211,79 @@ async def generate_itinerary(db: Session, request: RouteCreate) -> RouteData:
         ))
         global_order += 1
 
+        prev_coord = (start_lat, start_lon)
+
         start_idx = (day_index - 1) * pois_per_day
         end_idx = start_idx + pois_per_day if day_index < days_count else len(fetched_pois)
         day_pois = fetched_pois[start_idx:end_idx]
 
         for i, poi in enumerate(day_pois):
-            travel_time = 15 if prefs.transport == "walking" else (5 if prefs.transport == "by car" else 10)
+            poi_coord = (float(poi.get("latitude", city_lat)), float(poi.get("longitude", city_lon)))
 
-            if prefs.transport == "by car":
-                parking_wp = WaypointSchema(
-                    id=global_order + 9000,
-                    name=f"Parking near {poi.get('name', city)}",
-                    category="parking",
-                    latitude=float(poi.get('latitude', city_lat)) + random.uniform(-0.002, 0.002),
-                    longitude=float(poi.get('longitude', city_lon)) + random.uniform(-0.002, 0.002),
-                    order_index=global_order,
-                    arrival_time=current_time.strftime("%I:%M %p"),
-                    departure_time=(current_time + timedelta(minutes=5)).strftime("%I:%M %p"),
-                    estimated_cost=5.0,
-                )
-                day_stops.append(parking_wp)
-                global_order += 1
-                total_estimated_cost += 5.0
-                current_time += timedelta(minutes=5)
-
+            travel_time = await get_travel_time_minutes(prev_coord, poi_coord, prefs.transport)
             current_time += timedelta(minutes=travel_time)
-            arrival = current_time.strftime("%I:%M %p")
+
+            if current_time > day_end_time:
+                logger.warning(
+                    "Day %d would run past end_time (%s) — stopping at %d of %d planned stops.",
+                    day_index, prefs.end_time, i, len(day_pois),
+                )
+                break
 
             duration_minutes = 60
             schedule_lbl = poi.get("schedule_label", "").lower()
             if "lunch" in schedule_lbl or "dinner" in schedule_lbl or "meal" in schedule_lbl:
                 duration_minutes = 90
 
+            poi_cost = float(poi.get("estimated_cost", 0.0))
+
+            parking_cost = 0.0
+            if prefs.transport == "by car":
+                parking_cost = round(PARKING_RATE_PER_HOUR * max(1, math.ceil(duration_minutes / 60)), 2)
+
+            if prefs.budget and prefs.budget > 0:
+                projected_total = total_estimated_cost + poi_cost + parking_cost
+                if projected_total > prefs.budget:
+                    logger.warning(
+                        "Adding '%s' would push the trip over budget (%.2f > %.2f) — stopping here.",
+                        poi.get("name", "?"), projected_total, prefs.budget,
+                    )
+                    break
+
+            if prefs.transport == "by car":
+                walk_from_parking = 3
+                parking_wp = WaypointSchema(
+                    id=global_order + 9000,
+                    name=f"Parking near {poi.get('name', city)}",
+                    category="parking",
+                    latitude=poi_coord[0] + random.uniform(-0.002, 0.002),
+                    longitude=poi_coord[1] + random.uniform(-0.002, 0.002),
+                    order_index=global_order,
+                    arrival_time=current_time.strftime("%I:%M %p"),
+                    departure_time=(current_time + timedelta(minutes=walk_from_parking)).strftime("%I:%M %p"),
+                    estimated_cost=parking_cost,
+                    travel_minutes_from_previous=travel_time,
+                )
+                day_stops.append(parking_wp)
+                global_order += 1
+                total_estimated_cost += parking_cost
+                current_time += timedelta(minutes=walk_from_parking)
+
+            arrival = current_time.strftime("%I:%M %p")
             current_time += timedelta(minutes=duration_minutes)
             departure = current_time.strftime("%I:%M %p")
-
-            cost = float(poi.get("estimated_cost", 0.0))
 
             wp = WaypointSchema(
                 id=global_order + 1000,
                 name=poi.get("name", "Unknown Location"),
                 category=poi.get("category", "attraction"),
-                latitude=float(poi.get("latitude", city_lat)),
-                longitude=float(poi.get("longitude", city_lon)),
+                latitude=poi_coord[0],
+                longitude=poi_coord[1],
                 order_index=global_order,
                 arrival_time=arrival,
                 departure_time=departure,
                 schedule_label=poi.get("schedule_label", f"{duration_minutes} min visit"),
-                estimated_cost=cost,
+                estimated_cost=poi_cost,
                 travel_minutes_from_previous=travel_time,
                 transit_to_next=TransitDetails(
                     transit_mode=prefs.transport,
@@ -220,7 +292,8 @@ async def generate_itinerary(db: Session, request: RouteCreate) -> RouteData:
             )
             day_stops.append(wp)
             global_order += 1
-            total_estimated_cost += cost
+            total_estimated_cost += poi_cost
+            prev_coord = poi_coord
 
         final_name = plan_final.get("name") or start_name
         if final_name == start_name:
@@ -230,7 +303,7 @@ async def generate_itinerary(db: Session, request: RouteCreate) -> RouteData:
             if (final_lat, final_lon) == (0.0, 0.0):
                 final_lat, final_lon = city_lat, city_lon
 
-        travel_time_back = 15 if prefs.transport == "walking" else (5 if prefs.transport == "by car" else 10)
+        travel_time_back = await get_travel_time_minutes(prev_coord, (final_lat, final_lon), prefs.transport)
         current_time += timedelta(minutes=travel_time_back)
 
         day_stops.append(WaypointSchema(

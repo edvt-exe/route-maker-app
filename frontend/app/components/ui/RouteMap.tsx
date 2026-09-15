@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -17,10 +17,20 @@ export interface Waypoint {
   schedule_label?: string | null;
   estimated_cost?: number | null;
   travel_minutes_from_previous?: number | null;
+  transit_to_next?: { transit_mode: string } | null;
 }
 
 interface RouteMapProps {
   waypoints: Waypoint[];
+  selectedStopId?: string | null;
+  onStopSelect?: (stopId: string) => void;
+}
+
+function normalizeStopId(wp: Waypoint, fallbackIndex: number): string {
+  if (wp.id !== null && wp.id !== undefined && wp.id !== 0) {
+    return String(wp.id);
+  }
+  return `order-${wp.order_index ?? fallbackIndex}`;
 }
 
 const SEGMENT_COLORS = [
@@ -42,21 +52,50 @@ const CATEGORY_COLORS: Record<string, string> = {
   default: '#0A84FF',
 };
 
-function makeDivIcon(label: string, color: string) {
+const OSRM_PROFILE: Record<string, string> = {
+  walking: 'foot',
+  'by car': 'driving',
+};
+
+async function fetchRoadRoute(
+  a: [number, number],
+  b: [number, number],
+  profile: string
+): Promise<[number, number][] | null> {
+  try {
+    const url = `https://router.project-osrm.org/route/v1/${profile}/${a[1]},${a[0]};${b[1]},${b[0]}?overview=full&geometries=geojson`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const coords: [number, number][] | undefined = data?.routes?.[0]?.geometry?.coordinates;
+    if (!coords || coords.length === 0) return null;
+    const road = coords.map(c => [c[1], c[0]] as [number, number]);
+    return [a, ...road.slice(1, -1), b];
+  } catch {
+    return null;
+  }
+}
+
+function makeDivIcon(label: string, color: string, selected = false) {
+  const size = selected ? 32 : 28;
+  const border = selected ? '4px solid rgba(255,255,255,0.95)' : '2px solid rgba(0,0,0,0.5)';
+  const shadow = selected ? '0 0 0 4px rgba(10,132,255,0.45), 0 6px 12px rgba(0,0,0,0.45)' : '0 2px 6px rgba(0,0,0,0.4)';
+
   return L.divIcon({
     className: '',
     html: `<div style="
       background:${color};
       color:#000;
-      width:28px;height:28px;
+      width:${size}px;height:${size}px;
       border-radius:50%;
       display:flex;align-items:center;justify-content:center;
-      font-size:12px;font-weight:700;
-      border:2px solid rgba(0,0,0,0.5);
-      box-shadow:0 2px 6px rgba(0,0,0,0.4);
+      font-size:${selected ? 13 : 12}px;font-weight:800;
+      border:${border};
+      box-shadow:${shadow};
+      transform: translateY(${selected ? '-2px' : '0px'});
     ">${label}</div>`,
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
   });
 }
 
@@ -79,25 +118,83 @@ function FitBounds({ waypoints }: { waypoints: Waypoint[] }) {
   return null;
 }
 
-export default function RouteMap({ waypoints }: RouteMapProps) {
+function FocusSelectedStop({
+  waypoints,
+  selectedStopId,
+}: {
+  waypoints: Waypoint[];
+  selectedStopId: string | null;
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!selectedStopId) return;
+
+    const selected = waypoints.find((wp, index) => normalizeStopId(wp, index) === selectedStopId);
+    if (!selected) return;
+
+    const hasCoords = selected.latitude !== 0 || selected.longitude !== 0;
+    if (!hasCoords) return;
+
+    map.flyTo([selected.latitude, selected.longitude], Math.max(map.getZoom(), 15), {
+      animate: true,
+      duration: 0.8,
+    });
+  }, [map, selectedStopId, waypoints]);
+
+  return null;
+}
+
+interface Segment {
+  positions: [number, number][];
+  color: string;
+}
+
+export default function RouteMap({ waypoints, selectedStopId, onStopSelect }: RouteMapProps) {
   const sorted = useMemo(
     () => [...waypoints].sort((a, b) => a.order_index - b.order_index),
     [waypoints]
   );
 
-  const segments = useMemo(() => {
-    const result: { positions: [number, number][]; color: string }[] = [];
-    for (let i = 0; i < sorted.length - 1; i++) {
-      const a = sorted[i];
-      const b = sorted[i + 1];
-      if (a.latitude === 0 && a.longitude === 0) continue;
-      if (b.latitude === 0 && b.longitude === 0) continue;
-      result.push({
-        positions: [[a.latitude, a.longitude], [b.latitude, b.longitude]],
-        color: SEGMENT_COLORS[i % SEGMENT_COLORS.length],
-      });
-    }
-    return result;
+  const [segments, setSegments] = useState<Segment[]>([]);
+
+  useEffect(() => {
+    const validWaypoints = sorted.filter(wp => wp.latitude !== 0 || wp.longitude !== 0);
+    const routeSegments = validWaypoints.slice(0, -1).map((wp, i) => ({
+      a: [wp.latitude, wp.longitude] as [number, number],
+      b: [validWaypoints[i + 1].latitude, validWaypoints[i + 1].longitude] as [number, number],
+      color: SEGMENT_COLORS[i % SEGMENT_COLORS.length],
+      mode: wp.transit_to_next?.transit_mode,
+    }));
+
+    let cancelled = false;
+
+    const run = async () => {
+      if (!cancelled) setSegments([]);
+
+      const resolved: Segment[] = [];
+      for (const segment of routeSegments) {
+        if (cancelled) return;
+
+        const profile = OSRM_PROFILE[segment.mode ?? ''] ?? 'driving';
+        const road = await fetchRoadRoute(segment.a, segment.b, profile);
+
+        if (cancelled) return;
+
+        if (road) {
+          resolved.push({ positions: road, color: segment.color });
+          if (!cancelled) setSegments([...resolved]);
+        }
+
+        await new Promise(r => setTimeout(r, 350));
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
   }, [sorted]);
 
   if (sorted.length === 0) {
@@ -111,42 +208,57 @@ export default function RouteMap({ waypoints }: RouteMapProps) {
   const center: [number, number] = [sorted[0].latitude, sorted[0].longitude];
 
   return (
-    <MapContainer
-      center={center}
-      zoom={13}
-      scrollWheelZoom={true}
-      className="w-full h-full rounded-2xl z-0"
-      style={{ background: '#1c1c1e' }}
-    >
-      <TileLayer
-        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-      />
-
-      <FitBounds waypoints={sorted} />
-
-      {segments.map((seg, i) => (
-        <Polyline
-          key={i}
-          positions={seg.positions}
-          pathOptions={{ color: seg.color, weight: 5, opacity: 0.9 }}
+    <div className="dark-map-wrapper w-full h-full">
+      <MapContainer
+        center={center}
+        zoom={13}
+        scrollWheelZoom={true}
+        className="w-full h-full rounded-2xl z-0"
+        style={{ background: '#1c1c1e' }}
+      >
+        <TileLayer
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         />
-      ))}
 
-      {sorted.map((wp, i) => {
-        const color = CATEGORY_COLORS[wp.category] ?? CATEGORY_COLORS.default;
-        const label = wp.category === 'start_point' ? 'A'
-          : wp.category === 'end_point' ? 'B'
-          : wp.category === 'parking' ? 'P'
-          : `${i + 1}`;
-        return (
-          <Marker
-            key={wp.id ?? i}
-            position={[wp.latitude, wp.longitude]}
-            icon={makeDivIcon(label, color)}
+        <FitBounds waypoints={sorted} />
+        <FocusSelectedStop waypoints={sorted} selectedStopId={selectedStopId ?? null} />
+
+        {segments.map((seg, i) => (
+          <Polyline
+            key={i}
+            positions={seg.positions}
+            pathOptions={{ color: seg.color, weight: 5, opacity: 0.9 }}
           />
-        );
-      })}
-    </MapContainer>
+        ))}
+
+        {sorted.map((wp, i) => {
+          const color = CATEGORY_COLORS[wp.category] ?? CATEGORY_COLORS.default;
+          const stopId = normalizeStopId(wp, i);
+          const isSelected = stopId === (selectedStopId ?? null);
+          const label = `${i + 1}`;
+
+          return (
+            <Marker
+              key={stopId}
+              position={[wp.latitude, wp.longitude]}
+              zIndexOffset={isSelected ? 1000 : 0}
+              eventHandlers={{
+                click: () => {
+                  if (onStopSelect) onStopSelect(stopId);
+                },
+              }}
+              icon={makeDivIcon(label, color, isSelected)}
+            />
+          );
+        })}
+      </MapContainer>
+
+      <style jsx global>{`
+        .dark-map-wrapper .leaflet-tile-pane {
+          filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.85) saturate(0.9);
+        }
+      `}</style>
+    </div>
   );
 }

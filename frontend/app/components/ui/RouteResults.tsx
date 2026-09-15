@@ -49,21 +49,6 @@ interface RouteResultsProps {
   onBack: () => void;
 }
 
-const CATEGORY_ICON: Record<string, string> = {
-  start_point: '🏁',
-  end_point: '🏁',
-  parking: '🅿️',
-  restaurant: '🍽️',
-  cafe: '☕',
-  park: '🌳',
-  museum: '🏛️',
-  attraction: '📍',
-};
-
-function iconFor(category: string) {
-  return CATEGORY_ICON[category] ?? '📍';
-}
-
 function buildGoogleMapsUrl(dayStops: WaypointSchema[]): string {
   const valid = dayStops.filter(s => s.latitude !== 0 && s.longitude !== 0);
   if (valid.length < 2) return '';
@@ -81,8 +66,16 @@ function buildGoogleMapsUrl(dayStops: WaypointSchema[]): string {
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
+function getStopKey(wp: WaypointSchema, fallbackIndex: number): string {
+  if (wp.id !== null && wp.id !== undefined && wp.id !== 0) {
+    return String(wp.id);
+  }
+  return `${wp.name}-${wp.order_index ?? fallbackIndex}`;
+}
+
 export default function RouteResults({ route, onBack }: RouteResultsProps) {
   const [selectedDay, setSelectedDay] = useState(1);
+  const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
 
   const currentItinerary = useMemo(
     () => route.itineraries.find(it => it.day === selectedDay) ?? route.itineraries[0],
@@ -93,6 +86,8 @@ export default function RouteResults({ route, onBack }: RouteResultsProps) {
     if (!currentItinerary) return [];
     return [currentItinerary.start, ...currentItinerary.stops, currentItinerary.final_destination];
   }, [currentItinerary]);
+
+  const activeStopId = selectedStopId ?? (dayWaypoints.length ? getStopKey(dayWaypoints[0], 0) : null);
 
   const dayCost = useMemo(
     () => dayWaypoints.reduce((sum, wp) => sum + (wp.estimated_cost ?? 0), 0),
@@ -150,7 +145,10 @@ export default function RouteResults({ route, onBack }: RouteResultsProps) {
               {route.itineraries.map(it => (
                 <button
                   key={it.day}
-                  onClick={() => setSelectedDay(it.day)}
+                  onClick={() => {
+                    setSelectedDay(it.day);
+                    setSelectedStopId(null);
+                  }}
                   className={`relative px-4 py-2 rounded-full text-[14px] font-semibold whitespace-nowrap transition-colors ${
                     selectedDay === it.day ? 'text-white' : 'text-[#8e8e93] hover:text-white'
                   }`}
@@ -188,38 +186,51 @@ export default function RouteResults({ route, onBack }: RouteResultsProps) {
               transition={{ duration: 0.2 }}
               className="space-y-2"
             >
-              {dayWaypoints.map((wp, i) => (
-                <div key={wp.id ?? i} className="flex items-start gap-3 bg-[#1c1c1e] rounded-2xl p-4">
-                  <div className="w-9 h-9 rounded-full bg-[#2c2c2e] flex items-center justify-center text-[16px] shrink-0">
-                    {iconFor(wp.category)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-[15px] font-semibold text-white truncate">{wp.name}</p>
-                      {wp.estimated_cost !== null && wp.estimated_cost !== undefined && wp.estimated_cost > 0 && (
-                        <span className="text-[13px] font-medium text-[#0a84ff] shrink-0">
-                          €{wp.estimated_cost.toFixed(2)}
-                        </span>
-                      )}
+              {dayWaypoints.map((wp, i) => {
+                const stopKey = getStopKey(wp, i);
+                const isSelected = activeStopId === stopKey;
+
+                return (
+                  <button
+                    key={stopKey}
+                    onClick={() => setSelectedStopId(stopKey)}
+                    className={`w-full flex items-start gap-3 rounded-2xl p-4 text-left transition-all ${
+                      isSelected ? 'bg-[#12253d] border border-[#0a84ff]/80 shadow-[0_0_0_1px_rgba(10,132,255,0.35)]' : 'bg-[#1c1c1e] border border-transparent hover:bg-[#232326]'
+                    }`}
+                  >
+                    <div className={`w-9 h-9 rounded-full flex items-center justify-center text-[14px] font-bold shrink-0 ${
+                      isSelected ? 'bg-[#0a84ff] text-white' : 'bg-[#2c2c2e] text-[#e5e5ea]'
+                    }`}>
+                      {i + 1}
                     </div>
-                    <p className="text-[13px] text-[#8e8e93] mt-0.5">
-                      {wp.schedule_label || wp.category}
-                    </p>
-                    <div className="flex items-center gap-3 mt-1 text-[12px] text-[#636366]">
-                      {wp.arrival_time && (
-                        <span className="flex items-center gap-1">
-                          <Clock size={11} /> {wp.arrival_time}
-                        </span>
-                      )}
-                      {wp.travel_minutes_from_previous ? (
-                        <span className="flex items-center gap-1">
-                          <Car size={11} /> {wp.travel_minutes_from_previous} min
-                        </span>
-                      ) : null}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[15px] font-semibold text-white truncate">{wp.name}</p>
+                        {wp.estimated_cost !== null && wp.estimated_cost !== undefined && wp.estimated_cost > 0 && (
+                          <span className="text-[13px] font-medium text-[#0a84ff] shrink-0">
+                            €{wp.estimated_cost.toFixed(2)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[13px] text-[#8e8e93] mt-0.5">
+                        {wp.schedule_label || wp.category}
+                      </p>
+                      <div className="flex items-center gap-3 mt-1 text-[12px] text-[#636366]">
+                        {wp.arrival_time && (
+                          <span className="flex items-center gap-1">
+                            <Clock size={11} /> {wp.arrival_time}
+                          </span>
+                        )}
+                        {wp.travel_minutes_from_previous ? (
+                          <span className="flex items-center gap-1">
+                            <Car size={11} /> {wp.travel_minutes_from_previous} min
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                </div>
-              ))}
+                  </button>
+                );
+              })}
             </motion.div>
           </AnimatePresence>
         </div>
@@ -227,7 +238,11 @@ export default function RouteResults({ route, onBack }: RouteResultsProps) {
         {/* RIGHT: sticky interactive map */}
         <div className="print:hidden">
           <div className="sticky top-[88px] h-[calc(100vh-104px)] rounded-2xl overflow-hidden border border-white/5">
-            <RouteMap waypoints={dayWaypoints} />
+            <RouteMap
+              waypoints={dayWaypoints}
+              selectedStopId={activeStopId}
+              onStopSelect={setSelectedStopId}
+            />
           </div>
         </div>
       </main>
